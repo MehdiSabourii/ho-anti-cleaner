@@ -1,6 +1,7 @@
 <?php
 /**
  * Remediation and Disinfection Engine for HO Anti Cleaner
+ * موتور پاک‌سازی، جراحی فایل‌ها و حذف درپشتی‌های دیتابیس
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -11,15 +12,25 @@ if ( ! class_exists( 'HO_Anti_Cleaner' ) ) {
 
     class HO_Anti_Cleaner {
 
-        private static function get_backup_dir() {
+        public static function get_backup_dir() {
             $upload_dir = wp_upload_dir();
             $backup_dir = $upload_dir['basedir'] . '/afc-quarantine-backups';
             if ( ! file_exists( $backup_dir ) ) {
                 wp_mkdir_p( $backup_dir );
-                @file_put_contents( $backup_dir . '/.htaccess', 'Deny from all' );
+                @file_put_contents( $backup_dir . '/.htaccess', "Order Deny,Allow\nDeny from all\n" );
                 @file_put_contents( $backup_dir . '/index.php', '<?php // Silence is golden' );
             }
             return $backup_dir;
+        }
+
+        public static function backup_file_external( $source_path ) {
+            return self::backup_file( $source_path );
+        }
+
+        public static function backup_file( $source_path ) {
+            $backup_dir = self::get_backup_dir();
+            $safe_name = sanitize_file_name( basename( $source_path ) ) . '_' . date( 'Ymd_His' ) . '.bak';
+            return @copy( $source_path, $backup_dir . '/' . $safe_name );
         }
 
         public static function clean_database_artifacts() {
@@ -93,6 +104,7 @@ if ( ! class_exists( 'HO_Anti_Cleaner' ) ) {
                                          ( false !== stripos( $content, 'Asset Flow' ) ) ||
                                          ( false !== strpos( $content, 'WP_Sys_Optimiser' ) ) ||
                                          ( false !== strpos( $content, 'xCzpFLgFPHRLRAiM' ) ) ||
+                                         ( false !== strpos( $content, 'yrxc_u' ) ) ||
                                          ( false !== strpos( $content, 'AV_COMPLETED' ) );
 
                             if ( $is_target ) {
@@ -132,9 +144,52 @@ if ( ! class_exists( 'HO_Anti_Cleaner' ) ) {
                         if ( false !== strpos( $path, 'afc-quarantine-backups' ) ) {
                             continue;
                         }
-                        self::backup_file( $path );
-                        if ( @unlink( $path ) ) {
-                            $log[] = "فایل PHP مشکوک در آپلودها حذف شد: " . esc_html( basename( $path ) );
+
+                        // استثنا برای index.php استاندارد پوشه‌ها
+                        if ( 'index.php' === strtolower( $file->getFilename() ) && $file->getSize() < 120 ) {
+                            $check = trim( (string) @file_get_contents( $path ) );
+                            if ( empty( $check ) || false !== stripos( $check, 'Silence is golden' ) ) {
+                                continue;
+                            }
+                        }
+
+                        // استثنا برای پوشه‌های مجاز افزونه‌های امنیتی معتبر
+                        $is_known_security = (
+                            false !== strpos( $path, 'aios' . DIRECTORY_SEPARATOR . 'firewall-rules' ) ||
+                            false !== strpos( $path, 'aios/firewall-rules' ) ||
+                            false !== strpos( $path, 'wflogs' )
+                        );
+
+                        $content = @file_get_contents( $path );
+                        $has_signatures = false;
+                        if ( class_exists( 'HO_Anti_Scanner' ) ) {
+                            $matched_sigs = HO_Anti_Scanner::check_content_signatures( $content );
+                            $has_signatures = ! empty( $matched_sigs );
+                        }
+
+                        if ( $is_known_security && ! $has_signatures ) {
+                            continue;
+                        }
+
+                        // به جای حذف کورکورانه، فایل ابتدا به صورت امن قرنطینه و در مانیفست ثبت می‌شود
+                        if ( class_exists( 'HO_Anti_Quarantine_Manager' ) ) {
+                            $res = HO_Anti_Quarantine_Manager::quarantine_file(
+                                $path,
+                                'فایل PHP مشکوک و فاقد مجوز در پوشه Uploads',
+                                'quarantine_uploads_php',
+                                '',
+                                true // انتقال به قرنطینه و پاک‌سازی ایمن از مبدأ
+                            );
+
+                            if ( $res['success'] ) {
+                                $log[] = "فایل PHP در آپلودها به قرنطینه امن منتقل شد (شناسه پشتیبان: " . $res['backup_id'] . "): " . esc_html( basename( $path ) );
+                            } else {
+                                $log[] = "خطا در انتقال فایل به قرنطینه: " . esc_html( basename( $path ) );
+                            }
+                        } else {
+                            self::backup_file( $path );
+                            @unlink( $path );
+                            $log[] = "فایل PHP در آپلودها پشتیبان‌گیری و پاک شد: " . esc_html( basename( $path ) );
                         }
                     }
                 }
@@ -144,97 +199,41 @@ if ( ! class_exists( 'HO_Anti_Cleaner' ) ) {
 
             return [
                 'success' => true,
-                'log'     => empty( $log ) ? [ 'هیچ فایل PHP در آپلودها یافت نشد.' ] : $log,
+                'log'     => empty( $log ) ? [ 'هیچ فایل PHP مشکوکی در آپلودها یافت نشد.' ] : $log,
             ];
         }
 
+        /**
+         * جراحی و ترمیم هوشمند یک فایل با اعتبارسنجی نحوی قبل و بعد از اصلاح
+         */
         public static function repair_single_file( $file_path ) {
-            if ( function_exists( 'wp_normalize_path' ) ) {
-                $file_path = wp_normalize_path( $file_path );
-            }
-            if ( ! file_exists( $file_path ) && file_exists( ABSPATH . ltrim( $file_path, '/' ) ) ) {
-                $file_path = ABSPATH . ltrim( $file_path, '/' );
+            if ( class_exists( 'HO_Anti_Safe_Repair' ) ) {
+                return HO_Anti_Safe_Repair::targeted_surgical_repair( $file_path );
             }
 
-            if ( ! file_exists( $file_path ) || ! is_readable( $file_path ) ) {
-                return [ 'success' => false, 'message' => 'فایل در مسیر مشخص شده یافت نشد.' ];
-            }
-
-            // اگر فایل بخشی از خود افزونه یا نسخه قبلی پاک‌ساز است، نیاز به ترمیم ندارد
-            if ( false !== strpos( $file_path, 'wp-assetflow-cleaner' ) || false !== strpos( $file_path, 'ho-anti-cleaner' ) ) {
-                // اگر نسخه قبلی در پوشه نامعتبر است، حذف آن به عنوان فایل زائد
-                @unlink( $file_path );
-                return [
-                    'success' => true,
-                    'action'  => 'deleted',
-                    'message' => 'فایل زائد نسخه قبلی پاک‌ساز با موفقیت حذف شد.',
-                ];
-            }
-
-            if ( ! is_writable( $file_path ) ) {
-                return [ 'success' => false, 'message' => 'فایل قابل ویرایش نیست (سطح دسترسی را به 0644 تغییر دهید).' ];
-            }
-
-            $content = @file_get_contents( $file_path );
-            if ( false === $content ) {
-                return [ 'success' => false, 'message' => 'امکان خواندن محتوای فایل وجود ندارد.' ];
-            }
-
-            // تقسیم رشته‌ها برای جلوگیری از شناسایی اشتباه کد همین افزونه توسط اسکنرها
-            $markers = [
-                '/* Plugin Name:' . ' Asset Flow',
-                'Plugin Name:' . ' Asset Flow',
-                'goto ' . 'xCzpFLgF' . 'PHRLRAiM;',
-                'class ' . 'WP_Sys_' . 'Optimiser',
-                'AV_' . 'COMPLETED',
-            ];
-
-            $earliest_pos = false;
-            foreach ( $markers as $marker ) {
-                $pos = strpos( $content, $marker );
-                if ( false !== $pos ) {
-                    if ( false === $earliest_pos || $pos < $earliest_pos ) {
-                        $earliest_pos = $pos;
-                    }
-                }
-            }
-
-            if ( false === $earliest_pos ) {
-                return [ 'success' => false, 'message' => 'کد تزریقی Asset Flow در این فایل پیدا نشد.' ];
-            }
-
-            self::backup_file( $file_path );
-
-            if ( $earliest_pos < 300 && false !== strpos( $content, 'Plugin Name: Asset Flow' ) ) {
-                if ( @unlink( $file_path ) ) {
-                    return [
-                        'success' => true,
-                        'action'  => 'deleted',
-                        'message' => 'فایل اختصاصی بدافزار شناسایی و به طور کامل حذف شد.',
-                    ];
-                }
-            }
-
-            $clean_code = substr( $content, 0, $earliest_pos );
-            $clean_code = preg_replace( '/\?>\s*<\?php\s*$/', '', $clean_code );
-            $clean_code = preg_replace( '/\?>\s*$/', '', $clean_code );
-            $clean_code = rtrim( $clean_code ) . "\n";
-
-            if ( false !== @file_put_contents( $file_path, $clean_code ) ) {
-                return [
-                    'success' => true,
-                    'action'  => 'repaired',
-                    'message' => 'کد مخرب تزریق‌شده با موفقیت از انتهای فایل پاک و فایل ترمیم شد.',
-                ];
-            }
-
-            return [ 'success' => false, 'message' => 'خطا در بازنویسی و ذخیره فایل.' ];
+            return [ 'success' => false, 'message' => 'موتور جراحی امن در دسترس نیست.' ];
         }
 
-        private static function backup_file( $source_path ) {
-            $backup_dir = self::get_backup_dir();
-            $safe_name = sanitize_file_name( basename( $source_path ) ) . '_' . date( 'Ymd_His' ) . '.bak';
-            @copy( $source_path, $backup_dir . '/' . $safe_name );
+        /**
+         * بازگردانی فایل هسته با نسخه رسمی WordPress.org
+         */
+        public static function restore_core_file( $file_path ) {
+            if ( class_exists( 'HO_Anti_Safe_Repair' ) ) {
+                return HO_Anti_Safe_Repair::restore_core_file_from_official( $file_path );
+            }
+
+            return [ 'success' => false, 'message' => 'موتور بازگردانی رسمی در دسترس نیست.' ];
+        }
+
+        /**
+         * بازگردانی فایل از قرنطینه (Rollback)
+         */
+        public static function rollback_quarantine_item( $backup_id ) {
+            if ( class_exists( 'HO_Anti_Quarantine_Manager' ) ) {
+                return HO_Anti_Quarantine_Manager::rollback( $backup_id );
+            }
+
+            return [ 'success' => false, 'message' => 'مدیریت قرنطینه در دسترس نیست.' ];
         }
     }
 

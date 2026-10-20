@@ -1,6 +1,7 @@
 <?php
 /**
  * Scanner Engine for HO Anti Cleaner
+ * موتور اسکن عمیق، تحلیل اکتشافی و شناسایی کدهای مخرب
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -26,6 +27,9 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                 'option_anchor'  => 'json' . 'metafield',
                 'option_anchor2' => 'sub_valid' . '_adm',
                 'table_anchor'   => 'wp_sys_' . 'av_',
+                'cookie_locker'  => 'yrxc_u',
+                'gatekeeper_md5' => 'while(md5(md5(',
+                'hash_locker'    => 'fe' . '98788c' . '6cf41c9f48e53cc93' . '245c23c',
             ];
         }
 
@@ -56,7 +60,7 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                 if ( null !== $val ) {
                     $preview = is_scalar( $val ) ? (string) $val : json_encode( $val );
                     if ( strlen( $preview ) > 120 ) {
-                        $preview = mb_substr( $preview, 0, 120 ) . '...';
+                        $preview = function_exists( 'mb_substr' ) ? mb_substr( $preview, 0, 120 ) . '...' : substr( $preview, 0, 120 ) . '...';
                     }
                     $results['options'][] = [
                         'option_name' => $opt_name,
@@ -114,8 +118,14 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
             $content_dir = WP_CONTENT_DIR;
             self::scan_directory_files( $content_dir, $results );
 
-            // ۶. اسکن ریشه وردپرس
+            // ۶. اسکن تمامی فایل‌های PHP ریشه وردپرس (از جمله wp-login.php، index.php و...)
             self::scan_root_files( ABSPATH, $results );
+
+            // ۷. اسکن پوشه‌های هسته wp-admin و wp-includes
+            if ( defined( 'ABSPATH' ) ) {
+                self::scan_core_directory( ABSPATH . 'wp-admin', $results );
+                self::scan_core_directory( ABSPATH . WPINC, $results );
+            }
 
             return $results;
         }
@@ -144,7 +154,6 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                             $full_path = $file->getRealPath();
                             $filename  = $file->getFilename();
 
-                            // خواندن کل فایل (تا 2 مگابایت)
                             $content = @file_get_contents( $full_path, false, null, 0, 2097152 );
                             if ( empty( $content ) ) {
                                 continue;
@@ -226,6 +235,17 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                 $hits[] = 'هوک‌های مخفی‌سازی افزونه‌ها';
             }
 
+            // امضاهای جدید: گیت‌کیپر مسدودساز صفحه لاگین و کوکی هکر
+            if ( false !== strpos( $content, $sigs['cookie_locker'] ) ) {
+                $hits[] = 'کوکی مسدودساز صفحه لاگین (yrxc_u)';
+            }
+            if ( preg_match( '/while\s*\(\s*md5\s*\(\s*md5\s*\(/i', $content ) ) {
+                $hits[] = 'گیت‌کیپر مسدودساز ورود (while double-md5 die)';
+            }
+            if ( false !== strpos( $content, 'fe98788c6cf41c9f48e53cc93245c23c' ) || false !== strpos( $content, '98788c' ) ) {
+                $hits[] = 'هش انحصاری مهاجم در گیت‌کیپر (fe98788c...)';
+            }
+
             return $hits;
         }
 
@@ -246,7 +266,6 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
 
                 $full_path = $dir . DIRECTORY_SEPARATOR . $item;
 
-                // نادیده گرفتن هرگونه پوشه ابزار پاک‌ساز (چه نسخه قبلی و چه نسخه فعلی)
                 if ( false !== strpos( $full_path, 'wp-assetflow-cleaner' ) || false !== strpos( $full_path, 'ho-anti-cleaner' ) ) {
                     continue;
                 }
@@ -265,7 +284,6 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                         continue;
                     }
 
-                    // پوشه mu-plugins قبلاً به طور اختصاصی در گام ۴ عمیقاً بررسی شد
                     if ( $item === 'mu-plugins' ) {
                         continue;
                     }
@@ -275,6 +293,31 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                     $results['stats']['total_files_scanned']++;
                     self::inspect_single_php_file( $full_path, $results );
                 }
+            }
+        }
+
+        /**
+         * اسکن سریع پوشه‌های اصلی وردپرس (wp-admin و wp-includes)
+         */
+        private static function scan_core_directory( $dir, &$results ) {
+            if ( ! is_dir( $dir ) || ! is_readable( $dir ) ) {
+                return;
+            }
+
+            try {
+                $iterator = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator( $dir, RecursiveDirectoryIterator::SKIP_DOTS )
+                );
+
+                foreach ( $iterator as $file ) {
+                    if ( $file->isFile() && strtolower( $file->getExtension() ) === 'php' ) {
+                        $full_path = $file->getRealPath();
+                        $results['stats']['total_files_scanned']++;
+                        self::inspect_single_php_file( $full_path, $results );
+                    }
+                }
+            } catch ( Exception $e ) {
+                // عبور در صورت خطا در دسترسی
             }
         }
 
@@ -318,7 +361,7 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                 }
             }
 
-            // ۵. رشته‌های طولانی هگزادسیمال پیوسته (بیش از ۴۰ بایت متوالی برای دور زدن فایروال)
+            // ۵. رشته‌های طولانی هگزادسیمال پیوسته
             if ( preg_match( '/(?:\\\\x[0-9a-f]{2}){40,}/i', $content ) ) {
                 $hits[] = 'کدگذاری مشکوک هگزادسیمال متوالی (Hex Obfuscation)';
             }
@@ -351,15 +394,21 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
             $all_hits = array_merge( $matched_sigs, $matched_heuristics );
 
             if ( ! empty( $all_hits ) ) {
-                $is_injected_at_bottom = false;
+                $is_injected_top = false;
+                $is_injected_bottom = false;
                 $is_assetflow = ! empty( $matched_sigs );
 
+                // بررسی تزریق در بالای فایل (Header Gatekeeper)
+                if ( class_exists( 'HO_Anti_Protection' ) && HO_Anti_Protection::has_header_malware( $head_chunk ) ) {
+                    $is_injected_top = true;
+                }
+
+                // بررسی تزریق در انتهای فایل (Bottom)
                 $opt_needle = 'WP_' . 'Sys_' . 'Optimiser';
                 $goto_needle = 'xCzpFLgF' . 'PHRLRAiM';
-
                 if ( false !== strpos( $tail_chunk, $opt_needle ) || false !== strpos( $tail_chunk, $goto_needle ) ) {
                     if ( $size > 8192 && false === strpos( $head_chunk, $opt_needle ) ) {
-                        $is_injected_at_bottom = true;
+                        $is_injected_bottom = true;
                     }
                 }
 
@@ -371,7 +420,8 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                     'relative'           => $relative_path,
                     'size'               => $size_str,
                     'signatures'         => implode( ' | ', $all_hits ),
-                    'is_injected_bottom' => $is_injected_at_bottom,
+                    'is_injected_top'    => $is_injected_top,
+                    'is_injected_bottom' => $is_injected_bottom,
                     'is_assetflow'       => $is_assetflow,
                     'is_writable'        => is_writable( $full_path ),
                     'severity'           => 'critical',
@@ -390,12 +440,10 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                     if ( $file->isFile() && strtolower( $file->getExtension() ) === 'php' ) {
                         $full_path = $file->getRealPath();
 
-                        // نادیده گرفتن پوشه قرنطینه و بک‌آپ‌های خود افزونه
                         if ( false !== strpos( $full_path, 'afc-quarantine-backups' ) ) {
                             continue;
                         }
 
-                        // نادیده گرفتن فایل‌های استاندارد index.php سکوت طلایی وردپرس در آپلودها
                         if ( 'index.php' === strtolower( $file->getFilename() ) && $file->getSize() < 80 ) {
                             $check = trim( (string) @file_get_contents( $full_path ) );
                             if ( empty( $check ) || false !== stripos( $check, 'Silence is golden' ) ) {
@@ -406,7 +454,6 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                         $rel = str_replace( [ ABSPATH, '\\' ], [ '', '/' ], $full_path );
                         $size = $file->getSize();
 
-                        // خواندن ابتدا و انتهای فایل جهت کشف کدهای تزریقی الحاق شده
                         $head = @file_get_contents( $full_path, false, null, 0, min( 6144, $size ) );
                         $tail = '';
                         if ( $size > 6144 ) {
@@ -415,27 +462,25 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                         $combined = $head . ' ' . $tail;
                         $sigs = self::check_content_signatures( $combined );
 
-                        // بررسی فایل‌های افزونه‌های امنیتی معتبر (مانند All In One Security و Wordfence)
                         $is_known_security = (
                             false !== strpos( $full_path, 'aios' . DIRECTORY_SEPARATOR . 'firewall-rules' ) ||
                             false !== strpos( $full_path, 'aios/firewall-rules' ) ||
                             false !== strpos( $full_path, 'wflogs' )
                         );
 
-                        // ۱. اگر فایل متعلق به AIOS / Wordfence است و امضای بدافزار ندارد: کاملاً سالم است و رد شود
                         if ( $is_known_security && empty( $sigs ) ) {
                             continue;
                         }
 
                         $size_str = function_exists( 'size_format' ) ? size_format( $size ) : ( round( $size / 1024, 2 ) . ' KB' );
 
-                        // ۲. اگر بدافزار کد خود را به انتهای این فایل معتبر چسبانده است: به بخش فایل‌های آلوده برای «ترمیم» برود
                         if ( $is_known_security && ! empty( $sigs ) ) {
                             $results['infected_files'][] = [
                                 'path'               => $full_path,
                                 'relative'           => $rel,
                                 'size'               => $size_str,
                                 'signatures'         => 'کد بدافزار الحاق‌شده به فایل AIOS | ' . implode( ' | ', $sigs ),
+                                'is_injected_top'    => false,
                                 'is_injected_bottom' => true,
                                 'is_writable'        => is_writable( $full_path ),
                                 'severity'           => 'critical',
@@ -444,7 +489,6 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                             continue;
                         }
 
-                        // ۳. سایر فایل‌های غیرمجاز و مشکوک در آپلودها
                         $results['uploads_php'][] = [
                             'path'          => $full_path,
                             'relative'      => $rel,
@@ -462,18 +506,21 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
         }
 
         private static function scan_root_files( $root_dir, &$results ) {
-            $root_files = [
-                $root_dir . 'index.php',
-                $root_dir . 'wp-config.php',
-                $root_dir . 'wp-settings.php',
-                $root_dir . 'wp-load.php',
-            ];
-
-            foreach ( $root_files as $f ) {
-                if ( is_file( $f ) ) {
-                    $results['stats']['total_files_scanned']++;
-                    self::inspect_single_php_file( $f, $results );
+            $php_files = glob( $root_dir . '*.php' );
+            if ( ! empty( $php_files ) ) {
+                foreach ( $php_files as $f ) {
+                    if ( is_file( $f ) ) {
+                        $results['stats']['total_files_scanned']++;
+                        self::inspect_single_php_file( $f, $results );
+                    }
                 }
+            }
+
+            // بررسی فایل wp-config.php در صورتی که یک پوشه بالاتر از ریشه باشد
+            $parent_config = dirname( $root_dir ) . '/wp-config.php';
+            if ( file_exists( $parent_config ) && ( empty( $php_files ) || ! in_array( $parent_config, $php_files, true ) ) ) {
+                $results['stats']['total_files_scanned']++;
+                self::inspect_single_php_file( $parent_config, $results );
             }
         }
     }

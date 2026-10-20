@@ -219,7 +219,10 @@ jQuery(document).ready(function ($) {
             var typeBadge = '';
             var actionBtn = '';
 
-            if (f.is_assetflow) {
+            if (f.is_injected_top) {
+                typeBadge = '<span class="afc-badge afc-badge-danger">گیت‌کیپر ورود / مسدودکننده (بالای فایل)</span>';
+                actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '" style="background:#16a34a; border-color:#15803d;">جراحی و ترمیم فوری</button>';
+            } else if (f.is_assetflow) {
                 var typeLabel = f.is_injected_bottom ? 'الحاق Asset Flow (قابل جراحی)' : 'فایل مستقل بدافزار Asset Flow';
                 typeBadge = '<span class="afc-badge afc-badge-danger">' + typeLabel + '</span>';
                 actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '">ترمیم و جراحی</button>';
@@ -558,6 +561,265 @@ jQuery(document).ready(function ($) {
         e.preventDefault();
         $('#afc-terminal').empty();
         logMessage('کنسول پاک شد.', 'system');
+    });
+
+    // ==========================================
+    // اکشن‌های سپر ضد تزریق و امنیت فعال
+    // ==========================================
+
+    function updateLockTable(files) {
+        var $tbody = $('#afc-table-file-locks tbody');
+        if (!files || Object.keys(files).length === 0) return;
+
+        $tbody.empty();
+        Object.keys(files).forEach(function (name) {
+            var item = files[name];
+            var relPath = item.path.replace(/\\/g, '/');
+            var badge = item.locked
+                ? '<span class="afc-badge afc-badge-safe"><span class="dashicons dashicons-yes"></span> قفل‌شده و ضد تزریق</span>'
+                : '<span class="afc-badge afc-badge-warning"><span class="dashicons dashicons-warning"></span> قابل نوشتن (توصیه: قفل شود)</span>';
+            var writable = item.writable
+                ? '<span style="color:#dc2626; font-weight:bold;">بله (آسیب‌پذیر به بازنویسی)</span>'
+                : '<span style="color:#16a34a; font-weight:bold;">خیر (محافظت‌شده)</span>';
+
+            var row = '<tr>' +
+                '<td><strong><code>' + name + '</code></strong></td>' +
+                '<td><code style="font-size:11px;">' + relPath + '</code></td>' +
+                '<td><span class="afc-badge">' + item.perms + '</span></td>' +
+                '<td>' + badge + '</td>' +
+                '<td>' + writable + '</td>' +
+                '</tr>';
+            $tbody.append(row);
+        });
+    }
+
+    // قفل کردن فایل‌ها (0444)
+    $('#afc-btn-lock-files').on('click', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        $btn.prop('disabled', true);
+        logMessage('در حال اعمال قفل سطح 0444 روی کلیه فایل‌های حساس وردپرس...', 'warning');
+
+        $.post(afcData.ajax_url, {
+            action: 'afc_toggle_file_lock',
+            lock_action: 'lock',
+            nonce: afcData.nonce
+        }, function (res) {
+            $btn.prop('disabled', false);
+            if (res.success) {
+                $('#afc-val-locked').text('فعال (0444)');
+                updateLockTable(res.data.files);
+                logMessage(res.data.message, 'success');
+                alert(res.data.message);
+            }
+        });
+    });
+
+    // باز کردن موقت قفل فایل‌ها (0644)
+    $('#afc-btn-unlock-files').on('click', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        $btn.prop('disabled', true);
+        logMessage('در حال باز کردن قفل فایل‌ها جهت ویرایش یا به‌روزرسانی (0644)...', 'system');
+
+        $.post(afcData.ajax_url, {
+            action: 'afc_toggle_file_lock',
+            lock_action: 'unlock',
+            nonce: afcData.nonce
+        }, function (res) {
+            $btn.prop('disabled', false);
+            if (res.success) {
+                $('#afc-val-locked').text('باز (0644)');
+                updateLockTable(res.data.files);
+                logMessage(res.data.message, 'warning');
+                alert(res.data.message);
+            }
+        });
+    });
+
+    // سوئیچ خودترمیم‌کننده
+    $('#afc-toggle-self-heal').on('change', function () {
+        var enable = $(this).is(':checked') ? 1 : 0;
+        $.post(afcData.ajax_url, {
+            action: 'afc_toggle_self_healing',
+            enable: enable,
+            nonce: afcData.nonce
+        }, function (res) {
+            if (res.success) {
+                logMessage(res.data.message, enable ? 'success' : 'warning');
+            }
+        });
+    });
+
+    // سوئیچ فایروال
+    $('#afc-toggle-waf').on('change', function () {
+        var enable = $(this).is(':checked') ? 1 : 0;
+        $.post(afcData.ajax_url, {
+            action: 'afc_toggle_firewall',
+            enable: enable,
+            nonce: afcData.nonce
+        }, function (res) {
+            if (res.success) {
+                logMessage(res.data.message, enable ? 'success' : 'warning');
+            }
+        });
+    });
+
+    // استقرار سپر محافظتی Uploads و wp-includes
+    $('#afc-btn-install-shields').on('click', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        $btn.prop('disabled', true);
+        $.post(afcData.ajax_url, {
+            action: 'afc_install_execution_shields',
+            nonce: afcData.nonce
+        }, function (res) {
+            $btn.prop('disabled', false);
+            if (res.success) {
+                res.data.log.forEach(function (l) {
+                    logMessage(l, 'success');
+                });
+                alert('سپر ضد اجرای PHP با موفقیت در پوشه‌های uploads و wp-includes نصب شد.');
+            }
+        });
+    });
+
+    // سخت‌سازی wp-config.php
+    $('#afc-btn-harden-config').on('click', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        $btn.prop('disabled', true);
+        $.post(afcData.ajax_url, {
+            action: 'afc_apply_wp_config_hardening',
+            nonce: afcData.nonce
+        }, function (res) {
+            $btn.prop('disabled', false);
+            if (res.success) {
+                logMessage(res.data.message, 'success');
+                alert(res.data.message);
+            } else {
+                alert(res.data.message || 'خطا در ویرایش wp-config.php');
+            }
+        });
+    });
+
+    // پاک‌سازی کران‌جاب‌های مشکوک
+    $('#afc-btn-clean-crons').on('click', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        $btn.prop('disabled', true);
+        $.post(afcData.ajax_url, {
+            action: 'afc_clean_cron_jobs',
+            nonce: afcData.nonce
+        }, function (res) {
+            $btn.prop('disabled', false);
+            if (res.success) {
+                logMessage(res.data.message, 'success');
+                alert(res.data.message);
+                location.reload();
+            }
+        });
+    });
+
+    // پاک‌کردن تاریخچه حوادث امنیتی
+    $('#afc-btn-clear-sec-logs').on('click', function (e) {
+        e.preventDefault();
+        $.post(afcData.ajax_url, {
+            action: 'afc_clear_security_logs',
+            nonce: afcData.nonce
+        }, function (res) {
+            if (res.success) {
+                $('#afc-sec-logs-list').html('<p style="color:#64748b; margin:0;">هیچ تهاجم یا تزریق کدی در بازه اخیر ثبت نشده است.</p>');
+                logMessage(res.data.message, 'system');
+            }
+        });
+    });
+
+    // عملیات بازگردانی از قرنطینه (Rollback)
+    $(document).on('click', '.afc-btn-rollback', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        var backupId = $btn.data('backup-id');
+
+        if (!confirm('آیا از بازگردانی (Rollback) این فایل به حالت اولیه اطمینان دارید؟')) {
+            return;
+        }
+
+        $btn.prop('disabled', true).text('در حال بازگردانی...');
+        logMessage('درخواست بازگردانی برای بسته ' + backupId, 'system');
+
+        $.post(afcData.ajax_url, {
+            action: 'afc_quarantine_rollback',
+            nonce: afcData.nonce,
+            backup_id: backupId
+        }, function (res) {
+            if (res.success) {
+                logMessage(res.data.message, 'success');
+                alert(res.data.message);
+                location.reload();
+            } else {
+                logMessage('خطا در بازگردانی: ' + (res.data.message || 'خطای سرور'), 'error');
+                alert(res.data.message || 'خطا در بازگردانی');
+                $btn.prop('disabled', false).text('بازگردانی مجدد');
+            }
+        });
+    });
+
+    // بازگردانی فایل هسته از منبع رسمی WordPress.org
+    $(document).on('click', '.afc-btn-restore-core', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        var filePath = $btn.data('file-path');
+        var findingId = $btn.data('finding-id');
+
+        if (!confirm('فایل آلوده ابتدا در قرنطینه امن ذخیره شده و سپس با نسخه رسمی WordPress.org جایگزین می‌شود. ادامه می‌دهید؟')) {
+            return;
+        }
+
+        $btn.prop('disabled', true).text('در حال دریافت نسخه رسمی...');
+        logMessage('درخواست دانلود و جایگزینی فایل هسته: ' + filePath, 'system');
+
+        $.post(afcData.ajax_url, {
+            action: 'afc_restore_core_file',
+            nonce: afcData.nonce,
+            file_path: filePath,
+            finding_id: findingId
+        }, function (res) {
+            if (res.success) {
+                logMessage(res.data.message, 'success');
+                alert(res.data.message);
+                $btn.replaceWith('<span style="color:#16a34a; font-weight:bold;">ترمیم شد</span>');
+            } else {
+                logMessage('خطا: ' + (res.data.message || 'خطا در بازگردانی'), 'error');
+                alert(res.data.message || 'خطا در بازگردانی');
+                $btn.prop('disabled', false).text('تلاش مجدد');
+            }
+        });
+    });
+
+    // مشاهده تفاوت فایل (Diff Viewer)
+    $(document).on('click', '.afc-btn-view-diff', function (e) {
+        e.preventDefault();
+        var filePath = $(this).data('file-path');
+
+        logMessage('در حال دریافت گزارش تفاوت (Diff) برای: ' + filePath, 'system');
+        $.post(afcData.ajax_url, {
+            action: 'afc_get_file_diff',
+            nonce: afcData.nonce,
+            file_path: filePath
+        }, function (res) {
+            if (res.success) {
+                alert("تفاوت فایل محلی با نسخه رسمی WordPress.org:\n\n" + res.data.diff);
+            } else {
+                alert(res.data.message || 'خطا در محاسبه Diff');
+            }
+        });
+    });
+
+    // به‌روزرسانی جدول قرنطینه
+    $('#afc-btn-refresh-quarantine').on('click', function(e) {
+        e.preventDefault();
+        location.reload();
     });
 
 });

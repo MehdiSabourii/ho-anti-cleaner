@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: HO Anti Cleaner & Optimizer
+ * Plugin Name: HO Anti Cleaner & Security Shield
  * Plugin URI:  https://wordpress.org
- * Description: ابزار پیشرفته شناسایی، جراحی و ترمیم کدهای مخرب Asset Flow و بهینه‌سازی دیتابیس وردپرس.
- * Version:     2.5.0
+ * Description: ابزار پیشرفته ضد بدافزار، جراحی کدهای مخرب ورودی و گیت‌کیپرها، قفل ضد بازنویسی فایل‌ها و بهینه‌سازی دیتابیس وردپرس.
+ * Version:     3.0.0
  * Author:      ho mehdi sabour
  * Author URI:  https://wordpress.org
  * Text Domain: ho-anti-cleaner
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // تعریف ایمن ثوابت افزونه
-if ( ! defined( 'HO_ANTI_VERSION' ) )     define( 'HO_ANTI_VERSION', '2.5.0' );
+if ( ! defined( 'HO_ANTI_VERSION' ) )     define( 'HO_ANTI_VERSION', '3.0.0' );
 if ( ! defined( 'HO_ANTI_PLUGIN_FILE' ) ) define( 'HO_ANTI_PLUGIN_FILE', __FILE__ );
 if ( ! defined( 'HO_ANTI_PLUGIN_DIR' ) )  define( 'HO_ANTI_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'HO_ANTI_PLUGIN_URL' ) )  define( 'HO_ANTI_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -26,7 +26,19 @@ if ( ! defined( 'AFC_PLUGIN_FILE' ) ) define( 'AFC_PLUGIN_FILE', HO_ANTI_PLUGIN_
 if ( ! defined( 'AFC_PLUGIN_DIR' ) )  define( 'AFC_PLUGIN_DIR', HO_ANTI_PLUGIN_DIR );
 if ( ! defined( 'AFC_PLUGIN_URL' ) )  define( 'AFC_PLUGIN_URL', HO_ANTI_PLUGIN_URL );
 
-// بارگذاری فایل‌های کمکی
+// بارگذاری فایل‌های ماژولار و قراردادهای استاندارد Gravity
+require_once HO_ANTI_PLUGIN_DIR . 'includes/models/class-finding.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/contracts/interface-detection-adapter.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/remediation/class-quarantine-manager.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/remediation/class-safe-repair.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/engines/class-file-integrity-engine.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/engines/class-malware-engine.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/engines/class-persistence-engine.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/engines/class-vulnerability-engine.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/scanner/class-batch-scanner.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/host-agent/class-host-agent-bridge.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/rules/class-rule-manager.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/class-protection.php';
 require_once HO_ANTI_PLUGIN_DIR . 'includes/class-scanner.php';
 require_once HO_ANTI_PLUGIN_DIR . 'includes/class-cleaner.php';
 require_once HO_ANTI_PLUGIN_DIR . 'includes/class-optimizer.php';
@@ -47,6 +59,9 @@ if ( ! class_exists( 'HO_Anti_Cleaner_Plugin' ) ) {
         }
 
         private function __construct() {
+            // راه‌اندازی زودهنگام ماژول محافظت بلادرنگ و ضد تزریق
+            HO_Anti_Protection::get_instance();
+
             // خنثی‌سازی زودهنگام درپشتی
             $this->early_neutralize_malware();
 
@@ -92,10 +107,20 @@ if ( ! class_exists( 'HO_Anti_Cleaner_Plugin' ) ) {
                     }
                 }
 
-                $this->direct_messages[] = "عملیات پاک‌سازی کامل انجام شد: دیتابیس پاک شد، $repaired_files فایل آلوده ترمیم شدند و درپشتی‌های mu-plugins حذف شدند.";
+                // قفل کردن خودکار فایل‌های حساس به 0444 جهت جلوگیری از تزریق مجدد
+                HO_Anti_Protection::lock_critical_files();
+                HO_Anti_Protection::install_execution_shields();
+
+                $this->direct_messages[] = "عملیات پاک‌سازی کامل انجام شد: دیتابیس پاک شد، $repaired_files فایل آلوده ترمیم شدند، درپشتی‌های mu-plugins حذف شدند و کلیه فایل‌های اصلی به حالت ضد تزریق (0444) قفل گردیدند.";
             } elseif ( 'optimize_db_direct' === $action ) {
                 $opt_res = HO_Anti_Optimizer::optimize_database();
                 $this->direct_messages[] = "بهینه‌سازی دیتابیس انجام شد: " . implode( ' | ', $opt_res['report']['log'] );
+            } elseif ( 'lock_files_direct' === $action ) {
+                HO_Anti_Protection::lock_critical_files();
+                $this->direct_messages[] = "کلیه فایل‌های حساس وردپرس (wp-login.php، index.php و...) با مجوز 0444 قفل شدند و نوشتن در آن‌ها ناممکن گردید.";
+            } elseif ( 'unlock_files_direct' === $action ) {
+                HO_Anti_Protection::unlock_critical_files();
+                $this->direct_messages[] = "قفل فایل‌های حساس باز شد (مجوز 0644 برقرار گردید).";
             }
         }
 
@@ -137,12 +162,15 @@ if ( ! class_exists( 'HO_Anti_Cleaner_Plugin' ) ) {
                 'ajax_url' => admin_url( 'admin-ajax.php' ),
                 'nonce'    => wp_create_nonce( 'afc_security_nonce' ),
                 'strings'  => [
-                    'scanning'       => 'در حال اسکن عمیق سیستم...',
-                    'repairing'      => 'در حال ترمیم و پاک‌سازی...',
+                    'scanning'       => 'در حال اسکن عمیق سیستم و هسته...',
+                    'repairing'      => 'در حال جراحی و ترمیم فایل‌ها...',
                     'optimizing'     => 'در حال بهینه‌سازی دیتابیس...',
+                    'locking'        => 'در حال اعمال قفل محافظتی فایل‌ها...',
+                    'unlocking'      => 'در حال باز کردن قفل فایل‌ها...',
                     'confirm_clean'  => 'آیا از پاک‌سازی موارد انتخاب شده مطمئن هستید؟ نسخه پشتیبان از فایل‌ها به صورت خودکار تهیه می‌شود.',
                     'confirm_all'    => 'توجه: این عملیات تمامی موارد آلوده شناسایی شده (کاربران مخفی، جداول، آپشن‌ها و کدهای تزریق شده در فایل‌ها) را پاک‌سازی و ترمیم می‌کند. ادامه می‌دهید؟',
-                    'clean_success'  => 'عملیات پاک‌سازی با موفقیت انجام شد.',
+                    'confirm_lock'   => 'فایل‌های حساس به حالت فقط خواندنی (0444) قفل می‌شوند و حتی پروسه‌های PHP هاست دسترسی بازنویسی نخواهند داشت. ادامه می‌دهید؟',
+                    'clean_success'  => 'عملیات با موفقیت انجام شد.',
                     'error_occurred' => 'خطایی در ارتباط با سرور رخ داد.',
                 ]
             ] );
