@@ -47,6 +47,7 @@ if ( ! class_exists( 'HO_Anti_Finding' ) ) {
         const ACTION_QUARANTINE      = 'quarantine';
         const ACTION_MANUAL_REVIEW   = 'manual_review';
         const ACTION_SAFE_DELETE     = 'safe_delete';
+        const ACTION_DELETE          = 'safe_delete'; // سازگاری با کدهای ارجاع‌دهنده
         const ACTION_UPDATE          = 'update_component';
         const ACTION_CLEAN_DB        = 'clean_database_record';
 

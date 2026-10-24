@@ -396,10 +396,10 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
                 <!-- کارت ۱: پاک‌سازی دیتابیس -->
                 <div class="afc-box">
                     <div class="afc-box-icon"><span class="dashicons dashicons-database-remove"></span></div>
-                    <h3>پاک‌سازی دیتابیس وردپرس</h3>
-                    <p>حذف کاربران با الگوی <code>sys_*</code>، حذف جداول ردگیری <code>wp_sys_av_*</code> و حذف آپشن‌های <code>jsonmetafield</code> و <code>sub_valid_adm*</code> از دیتابیس.</p>
+                    <h3>پاک‌سازی دیتابیس و تزریق‌های Web3</h3>
+                    <p>حذف کاربران مخفی (<code>sys_*</code>)، جداول ردگیری، آپشن‌های مشکوک و پاک‌سازی کامل کدهای تزریقی EtherHiding و Web3 C2 از تمام پست‌ها، متادیتای المنتور و تخلیه کَش‌ها.</p>
                     <button id="afc-act-clean-db" class="button button-primary">
-                        اجرای پاک‌سازی دیتابیس
+                        اجرای پاک‌سازی دیتابیس و ریدایرکت‌ها
                     </button>
                 </div>
 

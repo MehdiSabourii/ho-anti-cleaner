@@ -283,7 +283,7 @@ if ( ! class_exists( 'HO_Anti_Batch_Scanner' ) ) {
                 }
 
                 // ۳. آپشن‌های مشکوک دیتابیس
-                if ( 'option' === $type || 'MALICIOUS_DB_OPTION' === $rule_id ) {
+                if ( 'option' === $type || in_array( $rule_id, [ 'MALICIOUS_DB_OPTION', 'DB_OPTION_ETHERHIDING_INJECTION' ], true ) ) {
                     $ui['options'][] = [
                         'option_name' => isset( $ev['option_name'] ) ? $ev['option_name'] : $path,
                         'value'       => isset( $ev['preview'] ) ? $ev['preview'] : ( isset( $ev['detail'] ) ? $ev['detail'] : '' ),
@@ -292,12 +292,23 @@ if ( ! class_exists( 'HO_Anti_Batch_Scanner' ) ) {
                     continue;
                 }
 
-                // ۴. جداول مشکوک دیتابیس
+                // ۴. جداول مشکوک دیتابیس یا تزریق‌های پست و المنتور
                 if ( 'table' === $type || 'MALICIOUS_DB_TABLE' === $rule_id ) {
                     $ui['tables'][] = [
                         'table_name' => isset( $ev['table_name'] ) ? $ev['table_name'] : $path,
                         'row_count'  => isset( $ev['row_count'] ) ? $ev['row_count'] : 0,
                         'severity'   => $sev,
+                    ];
+                    continue;
+                }
+
+                if ( in_array( $rule_id, [ 'DB_POST_ETHERHIDING_INJECTION', 'DB_POSTMETA_ETHERHIDING_INJECTION' ], true ) ) {
+                    $p_id = isset( $ev['post_id'] ) ? $ev['post_id'] : '';
+                    $p_title = isset( $ev['title'] ) ? $ev['title'] : ( isset( $ev['meta_key'] ) ? $ev['meta_key'] : '' );
+                    $ui['options'][] = [
+                        'option_name' => "محتوای پست/المنتور (#$p_id - $p_title)",
+                        'value'       => isset( $ev['detail'] ) ? $ev['detail'] : 'تزریق بدافزار Web3/EtherHiding در دیتابیس',
+                        'severity'    => 'critical',
                     ];
                     continue;
                 }

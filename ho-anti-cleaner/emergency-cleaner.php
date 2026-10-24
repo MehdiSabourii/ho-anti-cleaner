@@ -156,6 +156,64 @@ if ( isset( $_POST['run_emergency_clean'] ) || isset( $_GET['run'] ) ) {
         $actions_log[] = [ 'type' => 'success', 'msg' => "جدول مخرب `$tbl` از دیتابیس حذف شد." ];
     }
 
+    // ۴.۱. پاک‌سازی تزریق‌های EtherHiding و Web3 Smart Contract از wp_posts، wp_postmeta و wp_options
+    $eh_patterns = [
+        '/<script[^>]*>(?:(?!<\/script>).)*(?:polygon-bor-rpc|1rpc\.io|0xb29927B7D854b232D5E58CFc201866376E68C676|0x2cae8ae4|eth_call)(?:(?!<\/script>).)*<\/script>/is',
+        '/<script[^>]*data-no-optimize=[\'"]1[\'"][^>]*>(?:(?!<\/script>).)*(?:wp-settings|wpadminbar)(?:(?!<\/script>).)*(?:XMLHttpRequest|createElement\([\'"]script[\'"]\))(?:(?!<\/script>).)*<\/script>/is',
+    ];
+    $eh_terms = [ 'polygon-bor-rpc', '1rpc.io', '0xb29927B7D854b232D5E58CFc201866376E68C676', '0x2cae8ae4' ];
+    $eh_where = [];
+    foreach ( $eh_terms as $t ) {
+        $eh_where[] = $wpdb->prepare( "post_content LIKE %s", '%' . $wpdb->esc_like( $t ) . '%' );
+    }
+    $eh_posts = $wpdb->get_results( "SELECT ID, post_content FROM {$wpdb->posts} WHERE " . implode( ' OR ', $eh_where ) );
+    $eh_cleaned = 0;
+    if ( ! empty( $eh_posts ) ) {
+        foreach ( $eh_posts as $ep ) {
+            $orig = $ep->post_content;
+            $clean = $orig;
+            foreach ( $eh_patterns as $pat ) { $clean = preg_replace( $pat, '', $clean ); }
+            if ( $clean !== $orig ) {
+                $wpdb->update( $wpdb->posts, [ 'post_content' => $clean ], [ 'ID' => $ep->ID ] );
+                $eh_cleaned++;
+            }
+        }
+    }
+    if ( $eh_cleaned > 0 ) {
+        $actions_log[] = [ 'type' => 'success', 'msg' => "تعداد $eh_cleaned پست/برگه آلوده به کدهای EtherHiding و Web3 C2 پاک‌سازی شدند." ];
+    }
+
+    // متادیتای المنتور
+    $meta_where = [];
+    foreach ( $eh_terms as $t ) {
+        $meta_where[] = $wpdb->prepare( "meta_value LIKE %s", '%' . $wpdb->esc_like( $t ) . '%' );
+    }
+    $eh_metas = $wpdb->get_results( "SELECT meta_id, meta_value FROM {$wpdb->postmeta} WHERE " . implode( ' OR ', $meta_where ) );
+    $meta_count = 0;
+    if ( ! empty( $eh_metas ) ) {
+        foreach ( $eh_metas as $em ) {
+            $orig = $em->meta_value;
+            $clean = $orig;
+            foreach ( $eh_patterns as $pat ) { $clean = preg_replace( $pat, '', $clean ); }
+            if ( $clean !== $orig ) {
+                $wpdb->update( $wpdb->postmeta, [ 'meta_value' => $clean ], [ 'meta_id' => $em->meta_id ] );
+                $meta_count++;
+            }
+        }
+    }
+    if ( $meta_count > 0 ) {
+        $actions_log[] = [ 'type' => 'success', 'msg' => "تعداد $meta_count متادیتای المنتور آلوده به اسکریپت Web3 پاک‌سازی شدند." ];
+    }
+
+    // تخلیه کش Autoptimize و دیسک
+    if ( class_exists( 'autoptimizeCache' ) && method_exists( 'autoptimizeCache', 'clearall' ) ) {
+        autoptimizeCache::clearall();
+    }
+    $auto_cache = WP_CONTENT_DIR . '/cache/autoptimize';
+    if ( is_dir( $auto_cache ) ) {
+        @array_map( 'unlink', glob( "$auto_cache/*.*" ) );
+    }
+
     // ۵. بررسی و جراحی کلیه فایل‌های PHP ریشه وردپرس (از جمله wp-login.php، index.php و...)
     $root_php_files = glob( ABSPATH . '*.php' );
     if ( ! empty( $root_php_files ) ) {

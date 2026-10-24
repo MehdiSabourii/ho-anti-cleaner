@@ -321,8 +321,12 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
 
         public function ajax_batch_scan_start() {
             $this->verify_permissions();
-            $res = HO_Anti_Batch_Scanner::start_scan();
-            wp_send_json_success( $res );
+            try {
+                $res = HO_Anti_Batch_Scanner::start_scan();
+                wp_send_json_success( $res );
+            } catch ( Throwable $e ) {
+                wp_send_json_error( [ 'message' => 'خطا در آغاز اسکن: ' . $e->getMessage() ] );
+            }
         }
 
         public function ajax_batch_scan_step() {
@@ -331,8 +335,12 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             if ( empty( $scan_id ) ) {
                 wp_send_json_error( [ 'message' => 'شناسه اسکن نامعتبر است.' ] );
             }
-            $res = HO_Anti_Batch_Scanner::process_next_step( $scan_id );
-            wp_send_json_success( $res );
+            try {
+                $res = HO_Anti_Batch_Scanner::process_next_step( $scan_id );
+                wp_send_json_success( $res );
+            } catch ( Throwable $e ) {
+                wp_send_json_error( [ 'message' => 'خطا در پردازش پله اسکن: ' . $e->getMessage() ] );
+            }
         }
 
         public function ajax_quarantine_rollback() {

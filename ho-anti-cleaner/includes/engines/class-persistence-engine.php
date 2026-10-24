@@ -546,6 +546,66 @@ if ( ! class_exists( 'HO_Anti_Persistence_Engine' ) ) {
                 }
             }
 
+            // بررسی متادیتای المنتور و پست‌ها در wp_postmeta
+            $meta_like = [];
+            foreach ( [ 'polygon-bor-rpc', '1rpc.io', '0xb29927B7D854b232D5E58CFc201866376E68C676', '0x2cae8ae4' ] as $term ) {
+                $meta_like[] = $wpdb->prepare( "meta_value LIKE %s", '%' . $wpdb->esc_like( $term ) . '%' );
+            }
+            $meta_sql = implode( ' OR ', $meta_like );
+            $metas = $wpdb->get_results( "SELECT meta_id, post_id, meta_key FROM {$wpdb->postmeta} WHERE {$meta_sql} LIMIT 50" );
+            if ( ! empty( $metas ) ) {
+                foreach ( $metas as $m ) {
+                    $findings[] = new HO_Anti_Finding( [
+                        'scan_id'            => $scan_id,
+                        'engine'             => 'persistence_and_database',
+                        'rule_id'            => 'DB_POSTMETA_ETHERHIDING_INJECTION',
+                        'rule_version'       => '1.0.0',
+                        'threat_category'    => 'redirect_malware',
+                        'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                        'target_type'        => 'database_postmeta',
+                        'target_path'        => 'meta_id:' . $m->meta_id,
+                        'evidence'           => [
+                            'meta_id'   => $m->meta_id,
+                            'post_id'   => $m->post_id,
+                            'meta_key'  => $m->meta_key,
+                            'detail'    => "تزریق اسکریپت مخرب EtherHiding در متادیتای المنتور یا پست ({$m->meta_key})",
+                        ],
+                        'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                        'confidence'         => HO_Anti_Finding::CONFIDENCE_CONFIRMED,
+                        'recommended_action' => HO_Anti_Finding::ACTION_CLEAN_DB,
+                    ] );
+                }
+            }
+
+            // بررسی آپشن‌ها و ویجت‌های HTML در wp_options
+            $opt_like = [];
+            foreach ( [ 'polygon-bor-rpc', '1rpc.io', '0xb29927B7D854b232D5E58CFc201866376E68C676', '0x2cae8ae4' ] as $term ) {
+                $opt_like[] = $wpdb->prepare( "option_value LIKE %s", '%' . $wpdb->esc_like( $term ) . '%' );
+            }
+            $opt_sql = implode( ' OR ', $opt_like );
+            $opts = $wpdb->get_results( "SELECT option_name FROM {$wpdb->options} WHERE {$opt_sql} LIMIT 50" );
+            if ( ! empty( $opts ) ) {
+                foreach ( $opts as $o ) {
+                    $findings[] = new HO_Anti_Finding( [
+                        'scan_id'            => $scan_id,
+                        'engine'             => 'persistence_and_database',
+                        'rule_id'            => 'DB_OPTION_ETHERHIDING_INJECTION',
+                        'rule_version'       => '1.0.0',
+                        'threat_category'    => 'redirect_malware',
+                        'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                        'target_type'        => 'option',
+                        'target_path'        => $o->option_name,
+                        'evidence'           => [
+                            'option_name' => $o->option_name,
+                            'detail'      => "تزریق اسکریپت مخرب EtherHiding / Web3 C2 در تنظیمات ({$o->option_name})",
+                        ],
+                        'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                        'confidence'         => HO_Anti_Finding::CONFIDENCE_CONFIRMED,
+                        'recommended_action' => HO_Anti_Finding::ACTION_CLEAN_DB,
+                    ] );
+                }
+            }
+
             return $findings;
         }
 

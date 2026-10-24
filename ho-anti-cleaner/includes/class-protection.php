@@ -731,14 +731,18 @@ if ( ! class_exists( 'HO_Anti_Protection' ) ) {
             }
 
             if ( $neutralized_count > 0 ) {
-                self::record_security_event(
-                    'frontend_shield_neutralized',
-                    "سپر خروجی زنده ($neutralized_count) اسکریپت بدافزار EtherHiding / Web3 C2 را در درخواست کاربر خنثی کرد.",
-                    [
-                        'ip'  => self::get_client_ip(),
-                        'uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( $_SERVER['REQUEST_URI'] ) : '',
-                    ]
-                );
+                // ثبت لاگ با فاصله حداقل ۶۰ ثانیه جهت جلوگیری از پر شدن دیتابیس در سایت‌های با ترافیک بالا
+                if ( false === get_transient( 'ho_anti_last_frontend_neutralize_log' ) ) {
+                    set_transient( 'ho_anti_last_frontend_neutralize_log', time(), 60 );
+                    self::record_security_event(
+                        'frontend_shield_neutralized',
+                        "سپر خروجی زنده ($neutralized_count) اسکریپت بدافزار EtherHiding / Web3 C2 را در درخواست کاربر خنثی کرد.",
+                        [
+                            'ip'  => self::get_client_ip(),
+                            'uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( $_SERVER['REQUEST_URI'] ) : '',
+                        ]
+                    );
+                }
             }
 
             return $cleaned;

@@ -94,187 +94,190 @@ if ( ! class_exists( 'HO_Anti_File_Integrity_Engine' ) ) {
          * @return HO_Anti_Finding[]
          */
         public function scan( array $targets = [], array $context = [] ) {
-            global $wp_version;
-            $version   = ! empty( $wp_version ) ? $wp_version : get_bloginfo( 'version' );
-            $scan_id   = ! empty( $context['scan_id'] ) ? $context['scan_id'] : 'scan_' . date( 'Ymd_His' );
-            $checksums = self::get_official_core_checksums( $version );
-
             $findings = [];
+            try {
+                global $wp_version;
+                $version   = ! empty( $wp_version ) ? $wp_version : get_bloginfo( 'version' );
+                $scan_id   = ! empty( $context['scan_id'] ) ? $context['scan_id'] : 'scan_' . date( 'Ymd_His' );
+                $checksums = self::get_official_core_checksums( $version );
 
-            if ( false === $checksums ) {
-                $this->last_error = 'REFERENCE_UNAVAILABLE';
-                $findings[] = new HO_Anti_Finding( [
-                    'scan_id'            => $scan_id,
-                    'engine'             => $this->get_engine_id(),
-                    'rule_id'            => 'CORE_CHECKSUMS_API_BLOCKED',
-                    'rule_version'       => '1.0.0',
-                    'threat_category'    => 'network_connectivity',
-                    'classification'     => HO_Anti_Finding::CLASSIFICATION_SUSPICIOUS,
-                    'target_type'        => 'api_endpoint',
-                    'target_path'        => 'api.wordpress.org/core/checksums/1.0/',
-                    'evidence'           => [ 'error' => 'امکان دریافت چکسام‌های رسمی از WordPress.org فراهم نیست (قطعی اینترنت، فیلترینگ یا عدم پاسخ سرور).' ],
-                    'severity'           => HO_Anti_Finding::SEVERITY_MEDIUM,
-                    'confidence'         => HO_Anti_Finding::CONFIDENCE_CONFIRMED,
-                    'recommended_action' => HO_Anti_Finding::ACTION_MANUAL_REVIEW,
-                    'metadata'           => [ 'status' => 'BLOCKED_ENVIRONMENT' ],
-                ] );
-                return $findings;
-            }
-
-            $abs_path = wp_normalize_path( ABSPATH );
-
-            // ۱. بررسی فایل‌های موجود در لیست رسمی (فایل‌های تغییرکرده و فایل‌های حذف‌شده)
-            foreach ( $checksums as $rel_path => $expected_hash ) {
-                // مستثنی‌سازی فایل‌های زبان
-                if ( 0 === strpos( $rel_path, 'wp-content/' ) ) {
-                    continue;
-                }
-
-                $full_path = $abs_path . $rel_path;
-
-                if ( ! file_exists( $full_path ) ) {
-                    // فایل هسته حذف شده است
+                if ( false === $checksums ) {
+                    $this->last_error = 'REFERENCE_UNAVAILABLE';
                     $findings[] = new HO_Anti_Finding( [
                         'scan_id'            => $scan_id,
                         'engine'             => $this->get_engine_id(),
-                        'rule_id'            => 'CORE_FILE_MISSING',
+                        'rule_id'            => 'CORE_CHECKSUMS_API_BLOCKED',
                         'rule_version'       => '1.0.0',
-                        'threat_category'    => 'file_tampering',
-                        'classification'     => HO_Anti_Finding::CLASSIFICATION_FILE_CHANGE,
-                        'target_type'        => 'core_file',
-                        'target_path'        => $full_path,
-                        'evidence'           => [ 'detail' => 'فایل استاندارد هسته وردپرس از روی سرور حذف شده است.' ],
-                        'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
+                        'threat_category'    => 'network_connectivity',
+                        'classification'     => HO_Anti_Finding::CLASSIFICATION_SUSPICIOUS,
+                        'target_type'        => 'api_endpoint',
+                        'target_path'        => 'api.wordpress.org/core/checksums/1.0/',
+                        'evidence'           => [ 'error' => 'امکان دریافت چکسام‌های رسمی از WordPress.org فراهم نیست (قطعی اینترنت، فیلترینگ یا عدم پاسخ سرور).' ],
+                        'severity'           => HO_Anti_Finding::SEVERITY_MEDIUM,
                         'confidence'         => HO_Anti_Finding::CONFIDENCE_CONFIRMED,
-                        'local_hash'         => null,
-                        'trusted_reference'  => [
-                            'source'        => 'api.wordpress.org',
-                            'version'       => $version,
-                            'expected_hash' => $expected_hash,
-                        ],
-                        'recommended_action' => HO_Anti_Finding::ACTION_RESTORE_TRUSTED,
+                        'recommended_action' => HO_Anti_Finding::ACTION_MANUAL_REVIEW,
+                        'metadata'           => [ 'status' => 'BLOCKED_ENVIRONMENT' ],
                     ] );
-                    continue;
+                    return $findings;
                 }
 
-                // محاسبه هش فایل محلی
-                $local_hash = md5_file( $full_path );
-                if ( $local_hash !== $expected_hash ) {
-                    // فایل تغییر کرده است
-                    $findings[] = new HO_Anti_Finding( [
-                        'scan_id'            => $scan_id,
-                        'engine'             => $this->get_engine_id(),
-                        'rule_id'            => 'CORE_FILE_MODIFIED',
-                        'rule_version'       => '1.0.0',
-                        'threat_category'    => 'file_tampering',
-                        'classification'     => HO_Anti_Finding::CLASSIFICATION_FILE_CHANGE,
-                        'target_type'        => 'core_file',
-                        'target_path'        => $full_path,
-                        'evidence'           => [
-                            'detail'        => 'هش فایل با نسخه رسمی وردپرس مغایرت دارد (احتمال تزریق کد یا دستکاری).',
-                            'local_hash'    => $local_hash,
-                            'expected_hash' => $expected_hash,
-                        ],
-                        'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
-                        'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
-                        'local_hash'         => $local_hash,
-                        'trusted_reference'  => [
-                            'source'        => 'api.wordpress.org',
-                            'version'       => $version,
-                            'expected_hash' => $expected_hash,
-                        ],
-                        'recommended_action' => HO_Anti_Finding::ACTION_RESTORE_TRUSTED,
-                        'metadata'           => [
-                            'relative_path' => $rel_path,
-                            'file_size'     => filesize( $full_path ),
-                        ],
-                    ] );
-                }
-            }
+                $abs_path = wp_normalize_path( ABSPATH );
 
-            // ۲. بررسی فایل‌های PHP اضافی و ناشناخته در پوشه‌های اختصاصی هسته (wp-admin و wp-includes)
-            $core_dirs = [
-                $abs_path . 'wp-admin',
-                $abs_path . WPINC,
-            ];
-
-            foreach ( $core_dirs as $core_dir ) {
-                if ( ! is_dir( $core_dir ) ) continue;
-
-                try {
-                    $iterator = new RecursiveIteratorIterator(
-                        new RecursiveDirectoryIterator( $core_dir, RecursiveDirectoryIterator::SKIP_DOTS )
-                    );
-
-                    foreach ( $iterator as $file ) {
-                        if ( $file->isFile() && strtolower( $file->getExtension() ) === 'php' ) {
-                            $path     = wp_normalize_path( $file->getRealPath() );
-                            $rel_path = ltrim( substr( $path, strlen( $abs_path ) ), '/' );
-
-                            // اگر این فایل در لیست چکسام‌های رسمی وردپرس نباشد
-                            if ( ! isset( $checksums[ $rel_path ] ) ) {
-                                $local_hash = md5_file( $path );
-                                $findings[] = new HO_Anti_Finding( [
-                                    'scan_id'            => $scan_id,
-                                    'engine'             => $this->get_engine_id(),
-                                    'rule_id'            => 'CORE_DIR_UNREFERENCED_PHP',
-                                    'rule_version'       => '1.0.0',
-                                    'threat_category'    => 'malware',
-                                    'classification'     => HO_Anti_Finding::CLASSIFICATION_SUSPICIOUS,
-                                    'target_type'        => 'core_file',
-                                    'target_path'        => $path,
-                                    'evidence'           => [
-                                        'detail' => 'فایل PHP ناشناخته و فاقد مرجع رسمی در پوشه هسته وردپرس یافت شد (احتمال بک‌دور یا فایل غیررسمی).',
-                                        'file'   => $file->getFilename(),
-                                        'relative_path' => $rel_path,
-                                    ],
-                                    'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
-                                    'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
-                                    'local_hash'         => $local_hash,
-                                    'recommended_action' => HO_Anti_Finding::ACTION_DELETE,
-                                ] );
-                            }
-                        }
-                    }
-                } catch ( Exception $e ) {
-                    // در صورت خطای دسترسی
-                }
-            }
-
-            // ۳. بررسی فایل‌های ریشه وردپرس با پیشوند wp- که در چکسام رسمی وجود ندارند (مانند wp-vhost.php, wp-check.php)
-            $root_wp_files = @glob( $abs_path . 'wp-*.php' );
-            if ( ! empty( $root_wp_files ) ) {
-                foreach ( $root_wp_files as $rf ) {
-                    $rf_norm  = wp_normalize_path( $rf );
-                    $rel_path = ltrim( substr( $rf_norm, strlen( $abs_path ) ), '/' );
-
-                    // فایل‌های مجاز محلی که در چکسام توزیع نیستند
-                    if ( in_array( $rel_path, [ 'wp-config.php', 'wp-config-sample.php' ], true ) ) {
+                // ۱. بررسی فایل‌های موجود در لیست رسمی (فایل‌های تغییرکرده و فایل‌های حذف‌شده)
+                foreach ( $checksums as $rel_path => $expected_hash ) {
+                    // مستثنی‌سازی فایل‌های زبان
+                    if ( 0 === strpos( $rel_path, 'wp-content/' ) ) {
                         continue;
                     }
 
-                    if ( ! isset( $checksums[ $rel_path ] ) ) {
+                    $full_path = $abs_path . $rel_path;
+
+                    if ( ! file_exists( $full_path ) ) {
+                        // فایل هسته حذف شده است
                         $findings[] = new HO_Anti_Finding( [
                             'scan_id'            => $scan_id,
                             'engine'             => $this->get_engine_id(),
-                            'rule_id'            => 'CORE_ROOT_UNREFERENCED_PHP',
+                            'rule_id'            => 'CORE_FILE_MISSING',
                             'rule_version'       => '1.0.0',
-                            'threat_category'    => 'malware',
-                            'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                            'threat_category'    => 'file_tampering',
+                            'classification'     => HO_Anti_Finding::CLASSIFICATION_FILE_CHANGE,
                             'target_type'        => 'core_file',
-                            'target_path'        => $rf_norm,
-                            'evidence'           => [
-                                'detail' => "فایل PHP مشکوک و غیررسمی با پیشوند wp- در ریشه سایت کشف شد ($rel_path).",
-                                'file'   => basename( $rf_norm ),
-                                'relative_path' => $rel_path,
+                            'target_path'        => $full_path,
+                            'evidence'           => [ 'detail' => 'فایل استاندارد هسته وردپرس از روی سرور حذف شده است.' ],
+                            'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
+                            'confidence'         => HO_Anti_Finding::CONFIDENCE_CONFIRMED,
+                            'local_hash'         => null,
+                            'trusted_reference'  => [
+                                'source'        => 'api.wordpress.org',
+                                'version'       => $version,
+                                'expected_hash' => $expected_hash,
                             ],
-                            'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                            'recommended_action' => HO_Anti_Finding::ACTION_RESTORE_TRUSTED,
+                        ] );
+                        continue;
+                    }
+
+                    // محاسبه هش فایل محلی
+                    $local_hash = @md5_file( $full_path );
+                    if ( $local_hash && $local_hash !== $expected_hash ) {
+                        // فایل تغییر کرده است
+                        $findings[] = new HO_Anti_Finding( [
+                            'scan_id'            => $scan_id,
+                            'engine'             => $this->get_engine_id(),
+                            'rule_id'            => 'CORE_FILE_MODIFIED',
+                            'rule_version'       => '1.0.0',
+                            'threat_category'    => 'file_tampering',
+                            'classification'     => HO_Anti_Finding::CLASSIFICATION_FILE_CHANGE,
+                            'target_type'        => 'core_file',
+                            'target_path'        => $full_path,
+                            'evidence'           => [
+                                'detail'        => 'هش فایل با نسخه رسمی وردپرس مغایرت دارد (احتمال تزریق کد یا دستکاری).',
+                                'local_hash'    => $local_hash,
+                                'expected_hash' => $expected_hash,
+                            ],
+                            'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
                             'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
-                            'local_hash'         => md5_file( $rf_norm ),
-                            'recommended_action' => HO_Anti_Finding::ACTION_DELETE,
+                            'local_hash'         => $local_hash,
+                            'trusted_reference'  => [
+                                'source'        => 'api.wordpress.org',
+                                'version'       => $version,
+                                'expected_hash' => $expected_hash,
+                            ],
+                            'recommended_action' => HO_Anti_Finding::ACTION_RESTORE_TRUSTED,
+                            'metadata'           => [
+                                'relative_path' => $rel_path,
+                                'file_size'     => @filesize( $full_path ),
+                            ],
                         ] );
                     }
                 }
+
+                // ۲. بررسی فایل‌های PHP اضافی و ناشناخته در پوشه‌های اختصاصی هسته (wp-admin و wp-includes)
+                $core_dirs = [
+                    $abs_path . 'wp-admin',
+                    $abs_path . WPINC,
+                ];
+
+                foreach ( $core_dirs as $core_dir ) {
+                    if ( ! is_dir( $core_dir ) ) continue;
+
+                    try {
+                        $iterator = new RecursiveIteratorIterator(
+                            new RecursiveDirectoryIterator( $core_dir, RecursiveDirectoryIterator::SKIP_DOTS )
+                        );
+
+                        foreach ( $iterator as $file ) {
+                            if ( $file->isFile() && strtolower( $file->getExtension() ) === 'php' ) {
+                                $path     = wp_normalize_path( $file->getRealPath() );
+                                $rel_path = ltrim( substr( $path, strlen( $abs_path ) ), '/' );
+
+                                // اگر این فایل در لیست چکسام‌های رسمی وردپرس نباشد
+                                if ( ! isset( $checksums[ $rel_path ] ) ) {
+                                    $local_hash = @md5_file( $path );
+                                    $findings[] = new HO_Anti_Finding( [
+                                        'scan_id'            => $scan_id,
+                                        'engine'             => $this->get_engine_id(),
+                                        'rule_id'            => 'CORE_DIR_UNREFERENCED_PHP',
+                                        'rule_version'       => '1.0.0',
+                                        'threat_category'    => 'malware',
+                                        'classification'     => HO_Anti_Finding::CLASSIFICATION_SUSPICIOUS,
+                                        'target_type'        => 'core_file',
+                                        'target_path'        => $path,
+                                        'evidence'           => [
+                                            'detail' => 'فایل PHP ناشناخته و فاقد مرجع رسمی در پوشه هسته وردپرس یافت شد (احتمال بک‌دور یا فایل غیررسمی).',
+                                            'file'   => $file->getFilename(),
+                                            'relative_path' => $rel_path,
+                                        ],
+                                        'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
+                                        'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
+                                        'local_hash'         => $local_hash,
+                                        'recommended_action' => HO_Anti_Finding::ACTION_SAFE_DELETE,
+                                    ] );
+                                }
+                            }
+                        }
+                    } catch ( Throwable $e ) {
+                        // در صورت خطای دسترسی یا فایل سیستم
+                    }
+                }
+
+                // ۳. بررسی فایل‌های ریشه وردپرس با پیشوند wp- که در چکسام رسمی وجود ندارند (مانند wp-vhost.php, wp-check.php)
+                $root_wp_files = @glob( $abs_path . 'wp-*.php' );
+                if ( ! empty( $root_wp_files ) ) {
+                    foreach ( $root_wp_files as $rf ) {
+                        $rf_norm  = wp_normalize_path( $rf );
+                        $rel_path = ltrim( substr( $rf_norm, strlen( $abs_path ) ), '/' );
+
+                        // فایل‌های مجاز محلی که در چکسام توزیع نیستند
+                        if ( in_array( $rel_path, [ 'wp-config.php', 'wp-config-sample.php' ], true ) ) {
+                            continue;
+                        }
+
+                        if ( ! isset( $checksums[ $rel_path ] ) ) {
+                            $findings[] = new HO_Anti_Finding( [
+                                'scan_id'            => $scan_id,
+                                'engine'             => $this->get_engine_id(),
+                                'rule_id'            => 'CORE_ROOT_UNREFERENCED_PHP',
+                                'rule_version'       => '1.0.0',
+                                'threat_category'    => 'malware',
+                                'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                                'target_type'        => 'core_file',
+                                'target_path'        => $rf_norm,
+                                'evidence'           => [
+                                    'detail' => "فایل PHP مشکوک و غیررسمی با پیشوند wp- در ریشه سایت کشف شد ($rel_path).",
+                                    'file'   => basename( $rf_norm ),
+                                    'relative_path' => $rel_path,
+                                ],
+                                'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                                'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
+                                'local_hash'         => @md5_file( $rf_norm ),
+                                'recommended_action' => HO_Anti_Finding::ACTION_SAFE_DELETE,
+                            ] );
+                        }
+                    }
+                }
+            } catch ( Throwable $t ) {
+                $this->last_error = $t->getMessage();
             }
 
             return $findings;

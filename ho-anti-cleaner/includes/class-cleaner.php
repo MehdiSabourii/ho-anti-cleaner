@@ -124,15 +124,15 @@ if ( ! class_exists( 'HO_Anti_Cleaner' ) ) {
             }
             $where_sql = implode( ' OR ', $like_clauses );
 
-            $posts = $wpdb->get_results( "SELECT ID, post_content FROM {$wpdb->posts} WHERE {$where_sql}" );
+            $patterns = [
+                '/<script[^>]*>(?:(?!<\/script>).)*(?:polygon-bor-rpc|1rpc\.io|0xb29927B7D854b232D5E58CFc201866376E68C676|0x2cae8ae4|eth_call)(?:(?!<\/script>).)*<\/script>/is',
+                '/<script[^>]*data-no-optimize=[\'"]1[\'"][^>]*>(?:(?!<\/script>).)*(?:wp-settings|wpadminbar)(?:(?!<\/script>).)*(?:XMLHttpRequest|createElement\([\'"]script[\'"]\))(?:(?!<\/script>).)*<\/script>/is',
+            ];
 
+            // ۱. پاک‌سازی جدول wp_posts
+            $posts = $wpdb->get_results( "SELECT ID, post_content FROM {$wpdb->posts} WHERE {$where_sql}" );
             $cleaned_count = 0;
             if ( ! empty( $posts ) ) {
-                $patterns = [
-                    '/<script[^>]*>(?:(?!<\/script>).)*(?:polygon-bor-rpc|1rpc\.io|0xb29927B7D854b232D5E58CFc201866376E68C676|0x2cae8ae4|eth_call)(?:(?!<\/script>).)*<\/script>/is',
-                    '/<script[^>]*data-no-optimize=[\'"]1[\'"][^>]*>(?:(?!<\/script>).)*(?:wp-settings|wpadminbar)(?:(?!<\/script>).)*(?:XMLHttpRequest|createElement\([\'"]script[\'"]\))(?:(?!<\/script>).)*<\/script>/is',
-                ];
-
                 foreach ( $posts as $p ) {
                     $original = $p->post_content;
                     $cleaned  = $original;
@@ -152,20 +152,111 @@ if ( ! class_exists( 'HO_Anti_Cleaner' ) ) {
                     }
                 }
             }
-
             if ( $cleaned_count > 0 ) {
                 $log[] = "تعداد $cleaned_count پست/برگه آلوده به اسکریپت‌های EtherHiding و Web3 پاک‌سازی شدند.";
             }
 
-            // پاک‌سازی کش افزونه‌های بهینه‌ساز و قالب‌ساز (Autoptimize و Elementor)
+            // ۲. پاک‌سازی جدول wp_postmeta (به خصوص المنتور)
+            $meta_like = [];
+            foreach ( $malware_terms as $term ) {
+                $meta_like[] = $wpdb->prepare( "meta_value LIKE %s", '%' . $wpdb->esc_like( $term ) . '%' );
+            }
+            $meta_where = implode( ' OR ', $meta_like );
+            $metas = $wpdb->get_results( "SELECT meta_id, meta_value FROM {$wpdb->postmeta} WHERE {$meta_where}" );
+            $meta_cleaned = 0;
+            if ( ! empty( $metas ) ) {
+                foreach ( $metas as $m ) {
+                    $orig_m = $m->meta_value;
+                    $clean_m = $orig_m;
+                    foreach ( $patterns as $pat ) {
+                        $clean_m = preg_replace( $pat, '', $clean_m );
+                    }
+                    if ( $clean_m !== $orig_m ) {
+                        $wpdb->update(
+                            $wpdb->postmeta,
+                            [ 'meta_value' => $clean_m ],
+                            [ 'meta_id' => $m->meta_id ],
+                            [ '%s' ],
+                            [ '%d' ]
+                        );
+                        $meta_cleaned++;
+                    }
+                }
+            }
+            if ( $meta_cleaned > 0 ) {
+                $log[] = "تعداد $meta_cleaned رکورد متادیتای المنتور/پست آلوده به اسکریپت Web3 پاک‌سازی گردید.";
+            }
+
+            // ۳. پاک‌سازی جدول wp_options (ویجت‌های HTML، تنظیمات هدر/فوتر)
+            $opt_like = [];
+            foreach ( $malware_terms as $term ) {
+                $opt_like[] = $wpdb->prepare( "option_value LIKE %s", '%' . $wpdb->esc_like( $term ) . '%' );
+            }
+            $opt_where = implode( ' OR ', $opt_like );
+            $options = $wpdb->get_results( "SELECT option_name, option_value FROM {$wpdb->options} WHERE {$opt_where}" );
+            $opt_cleaned = 0;
+            if ( ! empty( $options ) ) {
+                foreach ( $options as $o ) {
+                    $orig_o = $o->option_value;
+                    $clean_o = $orig_o;
+                    foreach ( $patterns as $pat ) {
+                        $clean_o = preg_replace( $pat, '', $clean_o );
+                    }
+                    if ( $clean_o !== $orig_o ) {
+                        update_option( $o->option_name, $clean_o );
+                        $opt_cleaned++;
+                    }
+                }
+            }
+            if ( $opt_cleaned > 0 ) {
+                $log[] = "تعداد $opt_cleaned آپشن دیتابیس حاوی اسکریپت تزریقی پاک‌سازی شد.";
+            }
+
+            // ۴. بررسی و جراحی فایل‌های پوسته فعال (header.php, footer.php, functions.php)
+            if ( function_exists( 'get_stylesheet_directory' ) ) {
+                $theme_dir = get_stylesheet_directory();
+                if ( is_dir( $theme_dir ) ) {
+                    $theme_files = [ 'header.php', 'footer.php', 'index.php', 'functions.php' ];
+                    foreach ( $theme_files as $tf ) {
+                        $tf_path = $theme_dir . '/' . $tf;
+                        if ( file_exists( $tf_path ) && is_readable( $tf_path ) ) {
+                            $tf_content = @file_get_contents( $tf_path );
+                            if ( ! empty( $tf_content ) && preg_match( '/(?:polygon-bor-rpc|1rpc\.io|0xb29927B7D854b232D5E58CFc201866376E68C676|0x2cae8ae4)/i', $tf_content ) ) {
+                                self::backup_file_external( $tf_path );
+                                $tf_cleaned = $tf_content;
+                                foreach ( $patterns as $pat ) {
+                                    $tf_cleaned = preg_replace( $pat, '', $tf_cleaned );
+                                }
+                                if ( $tf_cleaned !== $tf_content && is_writable( $tf_path ) ) {
+                                    @file_put_contents( $tf_path, $tf_cleaned );
+                                    $log[] = "اسکریپت تزریقی از فایل پوسته ($tf) با موفقیت جراحی و حذف شد.";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ۵. پاک‌سازی کش افزونه‌های بهینه‌ساز و قالب‌ساز (Autoptimize و Elementor و کش فیزیکی دیسک)
             if ( class_exists( 'autoptimizeCache' ) && method_exists( 'autoptimizeCache', 'clearall' ) ) {
                 autoptimizeCache::clearall();
                 $log[] = "حافظه کش Autoptimize جهت حذف کامل اسکریپت‌های ترکیب‌شده تخلیه شد.";
             }
 
+            // تخلیه دستی فایل‌های کش Autoptimize از روی دیسک
+            $autoptimize_cache_dir = ( defined( 'WP_CONTENT_DIR' ) ? WP_CONTENT_DIR : ABSPATH . 'wp-content' ) . '/cache/autoptimize';
+            if ( is_dir( $autoptimize_cache_dir ) ) {
+                self::purge_cache_directory( $autoptimize_cache_dir );
+                $log[] = "فایل‌های کش استاتیک Autoptimize از پوشه wp-content/cache/autoptimize حذف شدند.";
+            }
+
             if ( class_exists( '\Elementor\Plugin' ) && isset( \Elementor\Plugin::$instance->files_manager ) ) {
                 \Elementor\Plugin::$instance->files_manager->clear_cache();
                 $log[] = "حافظه کَش CSS و فایل‌های المنتور تخلیه گردید.";
+            }
+
+            if ( function_exists( 'wp_cache_flush' ) ) {
+                wp_cache_flush();
             }
 
             return [
@@ -423,6 +514,30 @@ if ( ! class_exists( 'HO_Anti_Cleaner' ) ) {
                 'success' => true,
                 'log'     => empty( $log ) ? [ 'هیچ فایل PHP مشکوکی در آپلودها یافت نشد.' ] : $log,
             ];
+        }
+
+        /**
+         * پاک‌سازی بازگشتی فایل‌های موقت کش در صورت وجود دایرکتوری
+         */
+        public static function purge_cache_directory( $dir ) {
+            if ( ! is_dir( $dir ) || ! is_readable( $dir ) ) {
+                return;
+            }
+            try {
+                $iterator = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator( $dir, RecursiveDirectoryIterator::SKIP_DOTS ),
+                    RecursiveIteratorIterator::CHILD_FIRST
+                );
+                foreach ( $iterator as $item ) {
+                    if ( $item->isDir() ) {
+                        @rmdir( $item->getRealPath() );
+                    } else {
+                        @unlink( $item->getRealPath() );
+                    }
+                }
+            } catch ( Throwable $t ) {
+                // نادیده گرفتن خطاهای مجوز در هاست
+            }
         }
 
         /**
