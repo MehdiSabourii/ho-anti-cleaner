@@ -89,6 +89,13 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
                 <span class="afc-stat-value" id="afc-val-files">-</span>
             </div>
         </div>
+        <div class="afc-stat-card">
+            <div class="afc-stat-icon dashicons dashicons-wordpress"></div>
+            <div class="afc-stat-content">
+                <span class="afc-stat-label">ناهماهنگی هسته (غیررسمی)</span>
+                <span class="afc-stat-value" id="afc-val-core">-</span>
+            </div>
+        </div>
     </div>
 
     <!-- نوار پیشرفت عملیات -->
@@ -345,6 +352,24 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
                     </div>
                     <div id="afc-list-uploads" class="afc-section-body"></div>
                 </div>
+
+                <!-- ۶. فایل‌های تغییریافته یا غیررسمی هسته وردپرس (Core File Integrity) -->
+                <div class="afc-section-box" id="afc-box-core">
+                    <div class="afc-section-header">
+                        <h3><span class="dashicons dashicons-wordpress"></span> فایل‌های هسته وردپرس (فایل‌های تغییریافته یا غیررسمی / تزریق به wp-admin)</h3>
+                        <span id="afc-badge-core" class="afc-badge afc-badge-safe">پاک</span>
+                    </div>
+                    <div id="afc-list-core" class="afc-section-body"></div>
+                </div>
+
+                <!-- ۷. هشدار دستکاری آدرس سایت (Site URL Hijacking) -->
+                <div class="afc-section-box" id="afc-box-siteurl" style="display:none; border-right: 4px solid #dc2626;">
+                    <div class="afc-section-header">
+                        <h3><span class="dashicons dashicons-admin-site-alt3"></span> هشدار بحرانی: دستکاری آدرس اصلی سایت (Site URL Tampered)</h3>
+                        <span id="afc-badge-siteurl" class="afc-badge afc-badge-danger">تغییریافته</span>
+                    </div>
+                    <div id="afc-list-siteurl" class="afc-section-body"></div>
+                </div>
             </div>
         </div>
 
@@ -460,8 +485,13 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
             <!-- حوادث امنیتی ثبت شده توسط فایروال و خودترمیم‌کننده -->
             <div class="afc-box" style="margin-bottom:25px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                    <h3 style="margin:0;"><span class="dashicons dashicons-shield"></span> تاریخچه حملات مسدودشده و خودترمیم‌های انجام‌شده</h3>
-                    <button id="afc-btn-clear-sec-logs" class="button button-secondary">پاک‌کردن تاریخچه حوادث</button>
+                    <h3 style="margin:0;"><span class="dashicons dashicons-shield"></span> تاریخچه حملات مسدودشده، تغییرات و خودترمیم‌های انجام‌شده</h3>
+                    <div>
+                        <button id="afc-btn-refresh-sec-logs" class="button button-primary" style="margin-left:8px;">
+                            <span class="dashicons dashicons-update"></span> به‌روزرسانی لاگ‌ها
+                        </button>
+                        <button id="afc-btn-clear-sec-logs" class="button button-secondary">پاک‌کردن تاریخچه حوادث</button>
+                    </div>
                 </div>
 
                 <div id="afc-sec-logs-list">

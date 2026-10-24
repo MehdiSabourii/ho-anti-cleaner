@@ -33,10 +33,17 @@ if ( ! defined( 'HO_ANTI_PLUGIN_DIR' ) ) {
     define( 'HO_ANTI_PLUGIN_DIR', dirname( __DIR__ ) . '/ho-anti-cleaner/' );
 }
 
-// ساخت دایرکتوری‌های استاندارد سندباکس
+// ساخت دایرکتوری‌های استاندارد سندباکس و پاک‌سازی فایل‌های قفل‌شده قبلی
 @mkdir( WP_CONTENT_DIR, 0777, true );
 @mkdir( WPMU_PLUGIN_DIR, 0777, true );
 @mkdir( WP_CONTENT_DIR . '/uploads', 0777, true );
+
+foreach ( (array) glob( $sandbox_dir . '/*.php' ) as $existing_f ) {
+    if ( file_exists( $existing_f ) ) {
+        @chmod( $existing_f, 0666 );
+        @unlink( $existing_f );
+    }
+}
 
 // شبیه‌سازی توابع هسته وردپرس در محیط ایزوله
 $GLOBALS['mock_options']    = [];
@@ -91,6 +98,13 @@ function has_action( $hook ) { return 'wp_normal_cron' === $hook; }
 function get_core_updates() { return []; }
 function get_site_transient( $key ) { return false; }
 function get_stylesheet_directory() { return WP_CONTENT_DIR . '/themes/active-theme'; }
+if ( ! function_exists( 'is_admin' ) ) { function is_admin() { return false; } }
+if ( ! function_exists( 'wp_next_scheduled' ) ) { function wp_next_scheduled( $hook ) { return false; } }
+if ( ! function_exists( 'wp_schedule_event' ) ) { function wp_schedule_event( $timestamp, $recurrence, $hook ) { return true; } }
+if ( ! function_exists( 'add_action' ) ) { function add_action( $tag, $callback, $priority = 10, $accepted_args = 1 ) { return true; } }
+if ( ! function_exists( 'add_filter' ) ) { function add_filter( $tag, $callback, $priority = 10, $accepted_args = 1 ) { return true; } }
+if ( ! function_exists( 'esc_url_raw' ) ) { function esc_url_raw( $url ) { return $url; } }
+if ( ! function_exists( 'sanitize_text_field' ) ) { function sanitize_text_field( $str ) { return trim( strip_tags( $str ) ); } }
 
 // بارگذاری کلاس‌های افزونه
 require_once HO_ANTI_PLUGIN_DIR . 'includes/models/class-finding.php';
@@ -105,6 +119,7 @@ require_once HO_ANTI_PLUGIN_DIR . 'includes/scanner/class-batch-scanner.php';
 require_once HO_ANTI_PLUGIN_DIR . 'includes/host-agent/class-host-agent-bridge.php';
 require_once HO_ANTI_PLUGIN_DIR . 'includes/rules/class-rule-manager.php';
 require_once HO_ANTI_PLUGIN_DIR . 'includes/class-cleaner.php';
+require_once HO_ANTI_PLUGIN_DIR . 'includes/class-protection.php';
 
 // شمارنده‌های آزمون‌ها
 $tests_run    = 0;
@@ -285,6 +300,95 @@ $step2 = HO_Anti_Batch_Scanner::process_next_step( $start_scan['scan_id'] );
 assert_test(
     'پردازش موفق گام دوم اسکن (یکپارچگی فایل‌های هسته)',
     ! empty( $step2['success'] ) && 2 === $step2['current_step']
+);
+
+
+// ==========================================
+// بخش پنجم: تست حملات جدید (EtherHiding، دستکاری Site URL و فایل‌های غیررسمی)
+// ==========================================
+echo "\n--- 5. آزمون‌های مهار حملات پیشرفته (EtherHiding, Core Integrity, Site URL Guard) ---\n";
+
+// ۵.۱: تست شناسایی بدافزار اسمارت کانترکت پالیگان و EtherHiding
+$etherhiding_code = '<script data-no-optimize="1">(function(){var R=["https://1rpc.io/matic","https://polygon-bor-rpc.publicnode.com"];var a="0xb29927B7D854b232D5E58CFc201866376E68C676";var body=JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_call",params:[{to:a,data:"0x2cae8ae4"},"latest"]});})()</script>';
+$test_eh_file = $sandbox_dir . '/test-etherhiding.php';
+file_put_contents( $test_eh_file, "<?php // Header\n" . $etherhiding_code );
+
+$malware_engine = new HO_Anti_Malware_Engine();
+$eh_findings = $malware_engine->scan( [ $test_eh_file ] );
+$found_eh_rule = false;
+foreach ( $eh_findings as $f ) {
+    if ( 'MAL_ETHERHIDING_WEB3_RPC' === $f->get_rule_id() ) {
+        $found_eh_rule = true;
+        break;
+    }
+}
+assert_test(
+    'تشخیص قطعی بدافزار بلاکچین و Web3 C2 پالیگان (EtherHiding Campaign)',
+    $found_eh_rule
+);
+
+// ۵.۲: تست پالایشگر بلادرنگ خروجی (Real-time Frontend Output Buffer Sanitizer)
+$protection = HO_Anti_Protection::get_instance();
+$raw_html = '<html><head>' . $etherhiding_code . '<title>Site</title></head><body>Hello</body></html>';
+$sanitized_html = $protection->sanitize_frontend_output( $raw_html );
+assert_test(
+    'پالایشگر خروجی زنده: خنثی‌سازی و حذف بلادرنگ تگ اسکریپت EtherHiding از HTML',
+    false === strpos( $sanitized_html, 'polygon-bor-rpc' ) && false !== strpos( $sanitized_html, 'EtherHiding/Web3 C2 Injection Neutralized' )
+);
+
+// ۵.۳: تست حذف ایمن فایل غیررسمی هسته با ثبت در قرنطینه
+$rogue_core_file = $sandbox_dir . '/class-wp-plugins-list-table.php';
+file_put_contents( $rogue_core_file, "<?php // Rogue backdoor file in wp-admin\n" . $etherhiding_code );
+
+$safe_delete_res = HO_Anti_Cleaner::delete_file_safely( $rogue_core_file, 'حذف فایل غیررسمی هسته در تست' );
+assert_test(
+    'حذف امن فایل غیررسمی با پشتیبان‌گیری در قرنطینه قبل از حذف',
+    ! empty( $safe_delete_res['success'] ) && ! file_exists( $rogue_core_file ) && ! empty( $safe_delete_res['backup_id'] )
+);
+
+// ۵.۴: تست نگهبان آدرس سایت در برابر دستکاری دیتابیس (Site URL Option Guard)
+$hacked_siteurl = 'https://malicious-spam-redirect.ru/gate';
+$blocked_val = $protection->guard_siteurl_option( $hacked_siteurl, 'https://example.com' );
+assert_test(
+    'نگهبان دیتابیس: مسدودسازی خودکار تلاش برای تغییر آدرس سایت به دامنه اسپم خارجی (.ru)',
+    $blocked_val === 'https://example.com'
+);
+
+// ۵.۵: تست فیلتر بلادرنگ آدرس سایت در صورت وجود دامنه مخرب در دیتابیس
+$filtered_url = $protection->filter_tampered_siteurl( 'https://some-hacked-domain.top/evil' );
+assert_test(
+    'فیلتر بلادرنگ: بازگردانی آدرس سالم هنگام تلاش برای ریدایرکت بازدیدکنندگان به دامنه اسپم',
+    false === strpos( $filtered_url, '.top/evil' )
+);
+
+// ۵.۶: تست پایش و اصلاح خودکار سطوح دسترسی ناامن (File Permissions Watchdog)
+$perm_test_file = $sandbox_dir . '/wp-login.php';
+if ( file_exists( $perm_test_file ) ) {
+    @chmod( $perm_test_file, 0666 );
+}
+file_put_contents( $perm_test_file, '<?php // Login' );
+@chmod( $perm_test_file, 0777 );
+$reverted = HO_Anti_Protection::enforce_strict_permissions();
+$cur_perms = substr( sprintf( '%o', fileperms( $perm_test_file ) ), -4 );
+assert_test(
+    'نگهبان سطوح دسترسی: شناسایی و اصلاح خودکار فایل دارای دسترسی ناامن به 0444 یا 0644',
+    '0777' !== $cur_perms
+);
+@chmod( $perm_test_file, 0666 );
+
+// ۵.۷: تست ثبت و بازیابی لاگ‌های امنیتی ساختاریافته
+HO_Anti_Protection::record_security_event( 'test_event', 'پیام آزمایشی ثبت رویداد امنیتی', [ 'detail' => 'test' ] );
+$sec_logs = HO_Anti_Protection::get_security_logs();
+$found_log = false;
+foreach ( $sec_logs as $lg ) {
+    if ( isset( $lg['type'] ) && 'test_event' === $lg['type'] ) {
+        $found_log = true;
+        break;
+    }
+}
+assert_test(
+    'سیستم لاگ ساختاریافته: ثبت موفق و قابل بازیابی تاریخچه رویدادهای امنیتی با متادیتا',
+    $found_log
 );
 
 

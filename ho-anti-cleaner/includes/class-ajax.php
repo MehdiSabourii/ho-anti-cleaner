@@ -42,6 +42,7 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             add_action( 'wp_ajax_afc_restore_core_file',         [ $this, 'ajax_restore_core_file' ] );
             add_action( 'wp_ajax_afc_get_file_diff',             [ $this, 'ajax_get_file_diff' ] );
             add_action( 'wp_ajax_afc_get_host_agent_status',     [ $this, 'ajax_get_host_agent_status' ] );
+            add_action( 'wp_ajax_afc_restore_siteurl',           [ $this, 'ajax_restore_siteurl' ] );
         }
 
         private function verify_permissions() {
@@ -181,20 +182,34 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
         public function ajax_delete_single_file() {
             $this->verify_permissions();
             $file_path = isset( $_POST['file_path'] ) ? sanitize_text_field( wp_unslash( $_POST['file_path'] ) ) : '';
-            if ( empty( $file_path ) || ! file_exists( $file_path ) ) {
-                wp_send_json_error( [ 'message' => 'فایل یافت نشد.' ] );
+            if ( empty( $file_path ) ) {
+                wp_send_json_error( [ 'message' => 'مسیر فایل مشخص نشده است.' ] );
             }
 
-            $content_dir = realpath( WP_CONTENT_DIR );
-            $real_file = realpath( $file_path );
-            if ( false === $real_file || 0 !== strpos( $real_file, $content_dir ) ) {
-                wp_send_json_error( [ 'message' => 'مسیر فایل خارج از wp-content است و مجاز به حذف مستقیم نیست.' ] );
+            $normalized = $this->normalize_incoming_path( $file_path );
+            if ( empty( $normalized ) || ! file_exists( $normalized ) ) {
+                wp_send_json_error( [ 'message' => 'فایل در مسیر مشخص‌شده یافت نشد: ' . esc_html( $file_path ) ] );
             }
 
-            if ( @unlink( $real_file ) ) {
-                wp_send_json_success( [ 'message' => 'فایل با موفقیت حذف شد.' ] );
+            // حذف امن فایل با پشتیبان‌گیری در قرنطینه
+            $result = HO_Anti_Cleaner::delete_file_safely( $normalized, 'حذف فایل مخرب یا غیررسمی هسته به درخواست کاربر' );
+
+            if ( $result['success'] ) {
+                wp_send_json_success( $result );
             } else {
-                wp_send_json_error( [ 'message' => 'امکان حذف فایل وجود ندارد (مجوز دسترسی را بررسی کنید).' ] );
+                wp_send_json_error( $result );
+            }
+        }
+
+        public function ajax_restore_siteurl() {
+            $this->verify_permissions();
+            $target_url = isset( $_POST['target_url'] ) ? esc_url_raw( wp_unslash( $_POST['target_url'] ) ) : '';
+            $result = HO_Anti_Cleaner::restore_tampered_siteurl( $target_url );
+
+            if ( $result['success'] ) {
+                wp_send_json_success( $result );
+            } else {
+                wp_send_json_error( $result );
             }
         }
 

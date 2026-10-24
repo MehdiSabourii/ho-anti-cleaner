@@ -65,8 +65,14 @@ if ( ! class_exists( 'HO_Anti_Persistence_Engine' ) ) {
             // ۷. بررسی وظایف زمان‌بندی‌شده WP-Cron
             $findings = array_merge( $findings, self::scan_cron_persistence( $scan_id ) );
 
-            // ۸. بررسی فایل‌های پیکربندی وب‌سرور (.htaccess, .user.ini)
+            // ۸. بررسی محتوای پست‌ها و صفحات (تزریق‌های EtherHiding و المنتور)
+            $findings = array_merge( $findings, self::scan_database_posts( $scan_id ) );
+
+            // ۹. بررسی فایل‌های پیکربندی وب‌سرور (.htaccess, .user.ini)
             $findings = array_merge( $findings, self::scan_server_configs( $scan_id ) );
+
+            // ۱۰. بررسی سطوح دسترسی ناامن و تغییریافته فایل‌های حیاتی (Permissions Audit)
+            $findings = array_merge( $findings, self::scan_insecure_permissions( $scan_id ) );
 
             return $findings;
         }
@@ -361,6 +367,42 @@ if ( ! class_exists( 'HO_Anti_Persistence_Engine' ) ) {
                 }
             }
 
+            // ج) بررسی دستکاری آدرس اصلی سایت (Site URL / Home Hijacking)
+            $siteurl = get_option( 'siteurl', '' );
+            $home    = get_option( 'home', '' );
+            $tampered_tld_pattern = '/(?:\.ru|\.top|\.xyz|\.click|\.pw|\.cc|\.ws|ngrok|\/gate|\/evil|0x[0-9a-f]{40})/i';
+
+            foreach ( [ 'siteurl' => $siteurl, 'home' => $home ] as $key => $val ) {
+                if ( empty( $val ) || ! is_string( $val ) ) {
+                    continue;
+                }
+
+                $is_suspicious_tld  = (bool) preg_match( $tampered_tld_pattern, $val );
+                $trusted_url        = get_option( 'ho_anti_trusted_' . $key, '' );
+                $is_domain_mismatch = ( ! empty( $trusted_url ) && parse_url( $val, PHP_URL_HOST ) !== parse_url( $trusted_url, PHP_URL_HOST ) );
+
+                if ( $is_suspicious_tld || $is_domain_mismatch ) {
+                    $findings[] = new HO_Anti_Finding( [
+                        'scan_id'            => $scan_id,
+                        'engine'             => 'persistence_and_database',
+                        'rule_id'            => 'DB_SITEURL_TAMPERED',
+                        'rule_version'       => '1.0.0',
+                        'threat_category'    => 'redirect_hijack',
+                        'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                        'target_type'        => 'database_option',
+                        'target_path'        => $key,
+                        'evidence'           => [
+                            'detail'        => "آدرس اصلی سایت ($key) در پایگاه داده به یک دامنه خارجی یا اسپم تغییر داده شده است!",
+                            'current_value' => $val,
+                            'trusted_value' => $trusted_url,
+                        ],
+                        'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                        'confidence'         => HO_Anti_Finding::CONFIDENCE_CONFIRMED,
+                        'recommended_action' => HO_Anti_Finding::ACTION_CLEAN_DB,
+                    ] );
+                }
+            }
+
             return $findings;
         }
 
@@ -441,6 +483,126 @@ if ( ! class_exists( 'HO_Anti_Persistence_Engine' ) ) {
                         'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
                         'local_hash'         => md5( $content ),
                         'recommended_action' => HO_Anti_Finding::ACTION_MANUAL_REVIEW,
+                    ] );
+                }
+            }
+
+            return $findings;
+        }
+
+        /**
+         * ۹. بررسی محتوای پست‌ها و صفحات وردپرس (تزریق‌های EtherHiding و Web3 Smart Contract C2)
+         */
+        public static function scan_database_posts( $scan_id ) {
+            global $wpdb;
+            $findings = [];
+
+            if ( empty( $wpdb ) ) {
+                return $findings;
+            }
+
+            $malware_terms = [
+                'polygon-bor-rpc',
+                '1rpc.io',
+                '0xb29927B7D854b232D5E58CFc201866376E68C676',
+                '0x2cae8ae4',
+                'eth_call',
+                'data-no-optimize="1"',
+                'all.min.js',
+                'ClickFix',
+                'powershell -enc',
+                'powershell.exe -w hidden',
+            ];
+
+            $like_clauses = [];
+            foreach ( $malware_terms as $term ) {
+                $like_clauses[] = $wpdb->prepare( "post_content LIKE %s", '%' . $wpdb->esc_like( $term ) . '%' );
+            }
+            $where_sql = implode( ' OR ', $like_clauses );
+
+            $posts = $wpdb->get_results( "SELECT ID, post_title, post_type, post_status FROM {$wpdb->posts} WHERE {$where_sql} LIMIT 50" );
+
+            if ( ! empty( $posts ) ) {
+                foreach ( $posts as $p ) {
+                    $findings[] = new HO_Anti_Finding( [
+                        'scan_id'            => $scan_id,
+                        'engine'             => 'persistence_and_database',
+                        'rule_id'            => 'DB_POST_ETHERHIDING_INJECTION',
+                        'rule_version'       => '1.0.0',
+                        'threat_category'    => 'redirect_malware',
+                        'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                        'target_type'        => 'database_post',
+                        'target_path'        => 'post_id:' . $p->ID,
+                        'evidence'           => [
+                            'post_id'   => $p->ID,
+                            'title'     => $p->post_title,
+                            'post_type' => $p->post_type,
+                            'detail'    => "تزریق اسکریپت مخرب EtherHiding / Web3 Smart Contract در محتوای پست یا قالب المنتور",
+                        ],
+                        'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                        'confidence'         => HO_Anti_Finding::CONFIDENCE_CONFIRMED,
+                        'recommended_action' => HO_Anti_Finding::ACTION_CLEAN_DB,
+                    ] );
+                }
+            }
+
+            return $findings;
+        }
+
+        /**
+         * ۱۰. بررسی سطوح دسترسی ناامن و تغییریافته فایل‌های حیاتی (File Permissions Audit)
+         */
+        public static function scan_insecure_permissions( $scan_id ) {
+            $findings = [];
+            $abs_path = defined( 'ABSPATH' ) ? wp_normalize_path( ABSPATH ) : '';
+            if ( empty( $abs_path ) ) {
+                return $findings;
+            }
+
+            $sensitive_files = [
+                $abs_path . 'wp-config.php',
+                $abs_path . '.htaccess',
+                $abs_path . '.user.ini',
+                $abs_path . 'index.php',
+                $abs_path . 'wp-login.php',
+                $abs_path . 'wp-settings.php',
+                $abs_path . 'wp-load.php',
+                $abs_path . 'wp-admin/index.php',
+            ];
+
+            foreach ( $sensitive_files as $f ) {
+                if ( ! file_exists( $f ) ) {
+                    continue;
+                }
+
+                $perms = fileperms( $f );
+                if ( false === $perms ) {
+                    continue;
+                }
+
+                $octal = substr( sprintf( '%o', $perms ), -4 );
+
+                // در صورتی که فایل مجوز 0666، 0777، یا قابل نوشتن همگانی (World-Writable) داشته باشد
+                $is_world_writable = ( ( $perms & 0002 ) !== 0 );
+                $is_danger_mode    = in_array( $octal, [ '0666', '0777', '0775', '0664' ], true );
+
+                if ( $is_world_writable || $is_danger_mode ) {
+                    $findings[] = new HO_Anti_Finding( [
+                        'scan_id'            => $scan_id,
+                        'engine'             => 'persistence_and_database',
+                        'rule_id'            => 'FILE_PERMISSIONS_INSECURE',
+                        'rule_version'       => '1.0.0',
+                        'threat_category'    => 'permission_tampering',
+                        'classification'     => HO_Anti_Finding::CLASSIFICATION_SUSPICIOUS,
+                        'target_type'        => 'file',
+                        'target_path'        => $f,
+                        'evidence'           => [
+                            'current_perms' => $octal,
+                            'detail'        => "فایل حیاتی دارای سطح دسترسی ناامن ({$octal}) است و ممکن است توسط مهاجم قابل بازنویسی مجدد شده باشد.",
+                        ],
+                        'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
+                        'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
+                        'recommended_action' => HO_Anti_Finding::ACTION_TARGETED_REPAIR,
                     ] );
                 }
             }

@@ -138,6 +138,22 @@ if ( ! class_exists( 'HO_Anti_Finding' ) ) {
             return $this->to_array();
         }
 
+        public function get_rule_id() {
+            return $this->rule_id;
+        }
+
+        public function get_target_path() {
+            return $this->target_path;
+        }
+
+        public function get_evidence() {
+            return $this->evidence;
+        }
+
+        public function get_severity() {
+            return $this->severity;
+        }
+
         public static function from_array( array $data ) {
             return new self( $data );
         }

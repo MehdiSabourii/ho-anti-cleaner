@@ -94,6 +94,7 @@ jQuery(document).ready(function ($) {
         $('#afc-val-db').text(dbCount);
         $('#afc-val-files').text(filesCount);
         $('#afc-val-mu').text(muCount);
+        $('#afc-val-core').text((data.core_integrity || []).length);
 
         var $statusVal = $('#afc-val-status');
         if (threats > 0) {
@@ -118,6 +119,12 @@ jQuery(document).ready(function ($) {
 
         // ۵. رندر فایل‌های php در uploads
         renderUploadsSection(data.uploads_php);
+
+        // ۶. رندر یکپارچگی فایل‌های هسته وردپرس
+        renderCoreSection(data.core_integrity || []);
+
+        // ۷. رندر وضعیت آدرس اصلی سایت
+        renderSiteurlSection(data.tampered_siteurl || []);
     }
 
     function renderUsersSection(users) {
@@ -264,6 +271,74 @@ jQuery(document).ready(function ($) {
                 '<td>' + u.size + '</td>' +
                 '<td><span class="afc-badge afc-badge-danger">اسکریپت PHP غیرمجاز</span></td>' +
                 '<td><button class="button button-small button-link-delete afc-btn-delete-upload-file" data-path="' + u.path + '">حذف این فایل</button></td>' +
+                '</tr>';
+        });
+
+        html += '</tbody></table>';
+        $body.html(html);
+    }
+
+
+    function renderCoreSection(coreItems) {
+        var $badge = $('#afc-badge-core');
+        var $body = $('#afc-list-core');
+        $body.empty();
+
+        if (!coreItems || coreItems.length === 0) {
+            $badge.text('پاک').removeClass('afc-badge-danger').addClass('afc-badge-safe');
+            $body.html('<p style="color:#16a34a; margin:0;"><span class="dashicons dashicons-yes"></span> تمامی فایل‌های هسته وردپرس با مرجع رسمی مطابقت دارند و هیچ فایل غیررسمی یا ناشناخته‌ای در هسته یافت نشد.</p>');
+            return;
+        }
+
+        $badge.text(coreItems.length + ' ناهماهنگی هسته').removeClass('afc-badge-safe').addClass('afc-badge-danger');
+        var html = '<table class="afc-table"><thead><tr><th>مسیر فایل در هسته</th><th>وضعیت</th><th>توضیحات</th><th>عملیات</th></tr></thead><tbody>';
+
+        coreItems.forEach(function (item) {
+            var isModified = (item.type === 'modified');
+            var typeBadge = isModified 
+                ? '<span class="afc-badge afc-badge-warning">تغییریافته (عدم تطبیق هش)</span>'
+                : '<span class="afc-badge afc-badge-danger">فایل غیررسمی / فاقد مرجع رسمی</span>';
+
+            var actionsHtml = '';
+            if (isModified) {
+                actionsHtml += '<button class="button button-small button-primary afc-btn-restore-core" data-path="' + item.path + '" style="margin-left:5px;"><span class="dashicons dashicons-update"></span> بازگردانی از WordPress.org</button>' +
+                               '<button class="button button-small afc-btn-diff" data-path="' + item.path + '" style="margin-left:5px;"><span class="dashicons dashicons-visibility"></span> مشاهده تفاوت (Diff)</button>' +
+                               '<button class="button button-small button-link-delete afc-btn-delete-core" data-path="' + item.path + '"><span class="dashicons dashicons-trash"></span> حذف با قرنطینه</button>';
+            } else {
+                actionsHtml += '<button class="button button-small button-danger afc-btn-delete-core" data-path="' + item.path + '" style="background:#dc2626; color:#fff; border-color:#b91c1c;"><span class="dashicons dashicons-trash"></span> حذف فایل غیررسمی (با پشتیبان در قرنطینه)</button>';
+            }
+
+            html += '<tr data-filepath="' + item.path + '">' +
+                '<td><code>' + (item.relative || item.path) + '</code></td>' +
+                '<td>' + typeBadge + '</td>' +
+                '<td>' + (item.description || '') + '</td>' +
+                '<td>' + actionsHtml + '</td>' +
+                '</tr>';
+        });
+
+        html += '</tbody></table>';
+        $body.html(html);
+    }
+
+    function renderSiteurlSection(siteurlItems) {
+        var $box = $('#afc-box-siteurl');
+        var $body = $('#afc-list-siteurl');
+        $body.empty();
+
+        if (!siteurlItems || siteurlItems.length === 0) {
+            $box.hide();
+            return;
+        }
+
+        $box.show();
+        var html = '<table class="afc-table"><thead><tr><th>کلید تنظیمات</th><th>مقدار آلوده در دیتابیس</th><th>آدرس موثق</th><th>عملیات اصلاحی</th></tr></thead><tbody>';
+
+        siteurlItems.forEach(function (item) {
+            html += '<tr>' +
+                '<td><code>' + item.option + '</code></td>' +
+                '<td><strong style="color:#dc2626;">' + item.current_value + '</strong></td>' +
+                '<td><strong style="color:#16a34a;">' + (item.trusted_value || 'تشخیص خودکار از دامنه') + '</strong></td>' +
+                '<td><button class="button button-danger afc-btn-restore-siteurl" data-trusted="' + (item.trusted_value || '') + '"><span class="dashicons dashicons-undo"></span> اصلاح و بازگردانی فوری آدرس سایت</button></td>' +
                 '</tr>';
         });
 
@@ -820,6 +895,173 @@ jQuery(document).ready(function ($) {
     $('#afc-btn-refresh-quarantine').on('click', function(e) {
         e.preventDefault();
         location.reload();
+    });
+
+
+    // بارگذاری پویای لاگ‌های امنیتی
+    function loadSecurityLogs() {
+        var $list = $('#afc-sec-logs-list');
+        $list.html('<p style="color:#64748b; margin:0;"><span class="dashicons dashicons-update afc-spin"></span> در حال بارگذاری تاریخچه حوادث...</p>');
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_get_security_logs',
+                nonce: afcData.nonce
+            },
+            success: function (res) {
+                if (res.success && res.data.logs && res.data.logs.length > 0) {
+                    var html = '<table class="afc-table"><thead><tr><th>زمان</th><th>سطح خطر</th><th>نوع رویداد</th><th>شرح رویداد</th></tr></thead><tbody>';
+                    res.data.logs.forEach(function (lg) {
+                        var sevBadge = '<span class="afc-badge afc-badge-safe">عادی</span>';
+                        if (lg.severity === 'critical') sevBadge = '<span class="afc-badge afc-badge-danger">بحرانی</span>';
+                        else if (lg.severity === 'high') sevBadge = '<span class="afc-badge afc-badge-warning">بالا</span>';
+                        else if (lg.severity === 'medium') sevBadge = '<span class="afc-badge">متوسط</span>';
+
+                        var typeLabel = lg.type;
+                        if (lg.type === 'siteurl_tamper_blocked') typeLabel = 'مهار دستکاری آدرس سایت';
+                        else if (lg.type === 'self_healed') typeLabel = 'ترمیم خودکار فایل';
+                        else if (lg.type === 'firewall_blocked_payload') typeLabel = 'بلاک RCE فایروال';
+                        else if (lg.type === 'firewall_blocked_cookie') typeLabel = 'بلاک کوکی مهاجم';
+                        else if (lg.type === 'file_deleted') typeLabel = 'حذف امن با قرنطینه';
+                        else if (lg.type === 'permissions_enforced') typeLabel = 'اصلاح مجوزهای فایل';
+                        else if (lg.type === 'scan_completed') typeLabel = 'پایان اسکن سیستم';
+                        else if (lg.type === 'database_cleaned') typeLabel = 'پاک‌سازی دیتابیس';
+                        else if (lg.type === 'siteurl_restored') typeLabel = 'بازگردانی آدرس سایت';
+
+                        html += '<tr>' +
+                            '<td><code style="font-size:11px;">' + lg.time + '</code></td>' +
+                            '<td>' + sevBadge + '</td>' +
+                            '<td><strong>' + typeLabel + '</strong></td>' +
+                            '<td>' + lg.message + '</td>' +
+                            '</tr>';
+                    });
+                    html += '</tbody></table>';
+                    $list.html(html);
+                } else {
+                    $list.html('<p style="color:#64748b; margin:0;">هیچ تهاجم یا تزریق کدی در بازه اخیر ثبت نشده است.</p>');
+                }
+            },
+            error: function () {
+                $list.html('<p style="color:#dc2626; margin:0;">خطا در دریافت لاگ‌ها.</p>');
+            }
+        });
+    }
+
+    $('#afc-btn-refresh-sec-logs').on('click', function (e) {
+        e.preventDefault();
+        loadSecurityLogs();
+    });
+
+    $('.afc-tab-btn[data-tab="tab-logs"]').on('click', function () {
+        loadSecurityLogs();
+    });
+
+    // عملیات بازگردانی فایل رسمی هسته از WordPress.org
+    $(document).on('click', '.afc-btn-restore-core', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        var path = $btn.data('path');
+        if (!confirm('آیا از بازگردانی این فایل با نسخه رسمی و دست‌نخورده از سرور رسمی WordPress.org اطمینان دارید؟')) return;
+
+        $btn.prop('disabled', true).text('در حال دریافت از WordPress.org...');
+        logMessage('در حال بازگردانی فایل رسمی هسته: ' + path, 'system');
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_restore_core_file',
+                nonce: afcData.nonce,
+                file_path: path
+            },
+            success: function (res) {
+                if (res.success) {
+                    logMessage(res.data.message, 'success');
+                    $btn.closest('tr').fadeOut(400, function () { $(this).remove(); });
+                } else {
+                    logMessage('خطا در بازگردانی: ' + (res.data.message || 'خطای نامشخص'), 'danger');
+                    $btn.prop('disabled', false).text('تلاش مجدد');
+                }
+            },
+            error: function (xhr, s, err) {
+                logMessage('خطای ارتباط با سرور: ' + err, 'danger');
+                $btn.prop('disabled', false).text('تلاش مجدد');
+            }
+        });
+    });
+
+    // عملیات حذف فایل غیررسمی هسته با پشتیبان در قرنطینه
+    $(document).on('click', '.afc-btn-delete-core', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        var path = $btn.data('path');
+        if (!confirm('آیا از حذف این فایل غیررسمی اطمینان دارید؟ نسخه پشتیبان قبل از حذف به صورت امن در قرنطینه ذخیره خواهد شد.')) return;
+
+        $btn.prop('disabled', true).text('در حال حذف...');
+        logMessage('در حال انتقال به قرنطینه و حذف: ' + path, 'system');
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_delete_single_file',
+                nonce: afcData.nonce,
+                file_path: path
+            },
+            success: function (res) {
+                if (res.success) {
+                    logMessage(res.data.message, 'success');
+                    $btn.closest('tr').fadeOut(400, function () { $(this).remove(); });
+                } else {
+                    logMessage('خطا در حذف: ' + (res.data.message || 'خطای نامشخص'), 'danger');
+                    $btn.prop('disabled', false).text('حذف');
+                }
+            },
+            error: function (xhr, s, err) {
+                logMessage('خطای ارتباط با سرور: ' + err, 'danger');
+                $btn.prop('disabled', false).text('حذف');
+            }
+        });
+    });
+
+    // عملیات بازگردانی فوری آدرس سایت
+    $(document).on('click', '.afc-btn-restore-siteurl', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        var trusted = $btn.data('trusted');
+        if (!confirm('آیا از اصلاح و بازگردانی آدرس سایت به آدرس معتبر اطمینان دارید؟')) return;
+
+        $btn.prop('disabled', true).text('در حال اصلاح...');
+        logMessage('در حال بازگردانی آدرس سایت در دیتابیس...', 'system');
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_restore_siteurl',
+                nonce: afcData.nonce,
+                target_url: trusted
+            },
+            success: function (res) {
+                if (res.success) {
+                    logMessage('آدرس سایت با موفقیت اصلاح شد.', 'success');
+                    $('#afc-box-siteurl').slideUp();
+                } else {
+                    logMessage('خطا در اصلاح آدرس سایت: ' + (res.data.message || 'نامشخص'), 'danger');
+                    $btn.prop('disabled', false).text('تلاش مجدد');
+                }
+            },
+            error: function (xhr, s, err) {
+                logMessage('خطای ارتباط با سرور: ' + err, 'danger');
+                $btn.prop('disabled', false).text('تلاش مجدد');
+            }
+        });
     });
 
 });

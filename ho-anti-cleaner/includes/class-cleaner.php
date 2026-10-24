@@ -70,11 +70,233 @@ if ( ! class_exists( 'HO_Anti_Cleaner' ) ) {
                 }
             }
 
+            // ۴. پاک‌سازی تزریق‌های اسکریپت در محتوای پست‌ها و قالب المنتور (EtherHiding / Web3 C2)
+            $script_res = self::clean_database_script_injections();
+            if ( ! empty( $script_res['log'] ) ) {
+                $log = array_merge( $log, $script_res['log'] );
+            }
+
+            // ۵. اصلاح آدرس اصلی سایت در صورت دستکاری (Site URL / Home Tampering)
+            $siteurl_res = self::restore_tampered_siteurl();
+            if ( ! empty( $siteurl_res['log'] ) && false === strpos( $siteurl_res['log'][0], 'معتبر است' ) ) {
+                $log = array_merge( $log, $siteurl_res['log'] );
+            }
+
             wp_cache_flush();
+
+            if ( class_exists( 'HO_Anti_Protection' ) ) {
+                HO_Anti_Protection::record_security_event(
+                    'database_cleaned',
+                    "عملیات پاک‌سازی کامل دیتابیس اجرا شد (" . count( $log ) . " اقدام ثبت گردید).",
+                    [ 'actions' => $log ]
+                );
+            }
 
             return [
                 'success' => true,
                 'log'     => empty( $log ) ? [ 'دیتابیس از قبل پاک بود.' ] : $log,
+            ];
+        }
+
+        /**
+         * پاک‌سازی جراحی کدهای تزریقی EtherHiding، Web3 C2 و ریدایرکت‌های مخرب از جداول wp_posts و المنتور
+         */
+        public static function clean_database_script_injections() {
+            global $wpdb;
+            $log = [];
+
+            if ( empty( $wpdb ) ) {
+                return [ 'success' => false, 'log' => [ 'دسترسی به پایگاه داده موجود نیست.' ] ];
+            }
+
+            $malware_terms = [
+                'polygon-bor-rpc',
+                '1rpc.io',
+                '0xb29927B7D854b232D5E58CFc201866376E68C676',
+                '0x2cae8ae4',
+                'eth_call',
+                'data-no-optimize="1"',
+            ];
+
+            $like_clauses = [];
+            foreach ( $malware_terms as $term ) {
+                $like_clauses[] = $wpdb->prepare( "post_content LIKE %s", '%' . $wpdb->esc_like( $term ) . '%' );
+            }
+            $where_sql = implode( ' OR ', $like_clauses );
+
+            $posts = $wpdb->get_results( "SELECT ID, post_content FROM {$wpdb->posts} WHERE {$where_sql}" );
+
+            $cleaned_count = 0;
+            if ( ! empty( $posts ) ) {
+                $patterns = [
+                    '/<script[^>]*>(?:(?!<\/script>).)*(?:polygon-bor-rpc|1rpc\.io|0xb29927B7D854b232D5E58CFc201866376E68C676|0x2cae8ae4|eth_call)(?:(?!<\/script>).)*<\/script>/is',
+                    '/<script[^>]*data-no-optimize=[\'"]1[\'"][^>]*>(?:(?!<\/script>).)*(?:wp-settings|wpadminbar)(?:(?!<\/script>).)*(?:XMLHttpRequest|createElement\([\'"]script[\'"]\))(?:(?!<\/script>).)*<\/script>/is',
+                ];
+
+                foreach ( $posts as $p ) {
+                    $original = $p->post_content;
+                    $cleaned  = $original;
+                    foreach ( $patterns as $pat ) {
+                        $cleaned = preg_replace( $pat, '', $cleaned );
+                    }
+
+                    if ( $cleaned !== $original ) {
+                        $wpdb->update(
+                            $wpdb->posts,
+                            [ 'post_content' => $cleaned ],
+                            [ 'ID' => $p->ID ],
+                            [ '%s' ],
+                            [ '%d' ]
+                        );
+                        $cleaned_count++;
+                    }
+                }
+            }
+
+            if ( $cleaned_count > 0 ) {
+                $log[] = "تعداد $cleaned_count پست/برگه آلوده به اسکریپت‌های EtherHiding و Web3 پاک‌سازی شدند.";
+            }
+
+            // پاک‌سازی کش افزونه‌های بهینه‌ساز و قالب‌ساز (Autoptimize و Elementor)
+            if ( class_exists( 'autoptimizeCache' ) && method_exists( 'autoptimizeCache', 'clearall' ) ) {
+                autoptimizeCache::clearall();
+                $log[] = "حافظه کش Autoptimize جهت حذف کامل اسکریپت‌های ترکیب‌شده تخلیه شد.";
+            }
+
+            if ( class_exists( '\Elementor\Plugin' ) && isset( \Elementor\Plugin::$instance->files_manager ) ) {
+                \Elementor\Plugin::$instance->files_manager->clear_cache();
+                $log[] = "حافظه کَش CSS و فایل‌های المنتور تخلیه گردید.";
+            }
+
+            return [
+                'success'       => true,
+                'cleaned_count' => $cleaned_count,
+                'log'           => $log,
+            ];
+        }
+
+        /**
+         * اصلاح و بازگردانی آدرس‌های اصلی سایت (siteurl و home) در صورت دستکاری دیتابیس توسط مهاجم
+         */
+        public static function restore_tampered_siteurl( $target_url = '' ) {
+            $log = [];
+
+            if ( empty( $target_url ) ) {
+                $trusted_siteurl = get_option( 'ho_anti_trusted_siteurl', '' );
+                $trusted_home    = get_option( 'ho_anti_trusted_home', '' );
+
+                if ( ! empty( $trusted_siteurl ) ) {
+                    $target_url = $trusted_siteurl;
+                } else {
+                    $proto = ( isset( $_SERVER['HTTPS'] ) && 'on' === $_SERVER['HTTPS'] ) ? 'https://' : 'http://';
+                    $host  = isset( $_SERVER['HTTP_HOST'] ) ? sanitize_text_field( $_SERVER['HTTP_HOST'] ) : '';
+                    if ( ! empty( $host ) ) {
+                        $target_url = $proto . $host;
+                    }
+                }
+            }
+
+            if ( empty( $target_url ) ) {
+                return [ 'success' => false, 'message' => 'امکان تشخیص آدرس معتبر سایت وجود ندارد.' ];
+            }
+
+            $current_siteurl = get_option( 'siteurl', '' );
+            $current_home    = get_option( 'home', '' );
+
+            if ( $current_siteurl !== $target_url ) {
+                update_option( 'siteurl', $target_url );
+                $log[] = "آدرس siteurl از {$current_siteurl} به {$target_url} اصلاح گردید.";
+            }
+
+            if ( $current_home !== $target_url ) {
+                update_option( 'home', $target_url );
+                $log[] = "آدرس home از {$current_home} به {$target_url} اصلاح گردید.";
+            }
+
+            update_option( 'ho_anti_trusted_siteurl', $target_url, false );
+            update_option( 'ho_anti_trusted_home', $target_url, false );
+
+            if ( class_exists( 'HO_Anti_Protection' ) ) {
+                HO_Anti_Protection::record_security_event(
+                    'siteurl_restored',
+                    "آدرس اصلی سایت در پایگاه داده بازگردانی شد: $target_url",
+                    [ 'restored_url' => $target_url ]
+                );
+            }
+
+            return [
+                'success' => true,
+                'log'     => empty( $log ) ? [ 'آدرس سایت معتبر است و تغییری لازم نبود.' ] : $log,
+            ];
+        }
+
+        /**
+         * حذف ایمن یک فایل با انتقال پیشین به قرنطینه و مانیفست جهت امکان بازگردانی (Rollback)
+         */
+        public static function delete_file_safely( $file_path, $reason = 'حذف فایل مخرب یا غیررسمی' ) {
+            $real_path = realpath( $file_path );
+            if ( false === $real_path || ! file_exists( $real_path ) ) {
+                return [ 'success' => false, 'message' => 'فایل مورد نظر در مسیر مشخص‌شده یافت نشد.' ];
+            }
+
+            $abs_path  = defined( 'ABSPATH' ) ? wp_normalize_path( ABSPATH ) : '';
+            $norm_path = wp_normalize_path( $real_path );
+
+            if ( ! empty( $abs_path ) && 0 !== strpos( $norm_path, $abs_path ) ) {
+                return [ 'success' => false, 'message' => 'حذف فایل‌های خارج از ریشه وردپرس مجاز نیست.' ];
+            }
+
+            // فایل‌های حیاتی که تحت هیچ شرایطی نباید حذف شوند
+            $protected_files = [
+                $abs_path . 'wp-config.php',
+                $abs_path . 'index.php',
+                $abs_path . 'wp-settings.php',
+                $abs_path . 'wp-load.php',
+                $abs_path . 'wp-blog-header.php',
+            ];
+            if ( in_array( $norm_path, $protected_files, true ) ) {
+                return [ 'success' => false, 'message' => 'حذف فایل حیاتی ریشه وردپرس مجاز نیست.' ];
+            }
+
+            // انتقال فایل به قرنطینه امن همراه با متادیتا و هش SHA256 قبل از حذف
+            $backup_id = '';
+            if ( class_exists( 'HO_Anti_Quarantine_Manager' ) ) {
+                $q_res = HO_Anti_Quarantine_Manager::quarantine_file(
+                    $real_path,
+                    $reason,
+                    'user_requested_delete',
+                    '',
+                    true // انتقال به قرنطینه و پاک‌سازی ایمن از مبدأ
+                );
+
+                if ( $q_res['success'] ) {
+                    $backup_id = $q_res['backup_id'];
+                } else {
+                    return [ 'success' => false, 'message' => 'خطا در پشتیبان‌گیری امن در قرنطینه: ' . $q_res['message'] ];
+                }
+            } else {
+                self::backup_file( $real_path );
+                if ( ! @unlink( $real_path ) ) {
+                    return [ 'success' => false, 'message' => 'خطا در حذف فیزیکی فایل از روی سرور (دسترسی دایرکتوری را بررسی نمایید).' ];
+                }
+            }
+
+            if ( class_exists( 'HO_Anti_Protection' ) ) {
+                HO_Anti_Protection::record_security_event(
+                    'file_deleted',
+                    "فایل با موفقیت حذف و نسخه پشتیبان آن در قرنطینه ذخیره شد: " . basename( $norm_path ),
+                    [
+                        'path'      => $norm_path,
+                        'backup_id' => $backup_id,
+                        'reason'    => $reason,
+                    ]
+                );
+            }
+
+            return [
+                'success'   => true,
+                'backup_id' => $backup_id,
+                'message'   => 'فایل با موفقیت به قرنطینه امن منتقل و از روی سرور حذف شد.',
             ];
         }
 

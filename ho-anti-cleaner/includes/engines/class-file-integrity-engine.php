@@ -224,13 +224,14 @@ if ( ! class_exists( 'HO_Anti_File_Integrity_Engine' ) ) {
                                     'target_type'        => 'core_file',
                                     'target_path'        => $path,
                                     'evidence'           => [
-                                        'detail' => 'فایل PHP ناشناخته و فاقد مرجع رسمی در پوشه هسته وردپرس یافت شد.',
+                                        'detail' => 'فایل PHP ناشناخته و فاقد مرجع رسمی در پوشه هسته وردپرس یافت شد (احتمال بک‌دور یا فایل غیررسمی).',
                                         'file'   => $file->getFilename(),
+                                        'relative_path' => $rel_path,
                                     ],
                                     'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
-                                    'confidence'         => HO_Anti_Finding::CONFIDENCE_MEDIUM,
+                                    'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
                                     'local_hash'         => $local_hash,
-                                    'recommended_action' => HO_Anti_Finding::ACTION_QUARANTINE,
+                                    'recommended_action' => HO_Anti_Finding::ACTION_DELETE,
                                 ] );
                             }
                         }
@@ -240,7 +241,59 @@ if ( ! class_exists( 'HO_Anti_File_Integrity_Engine' ) ) {
                 }
             }
 
+            // ۳. بررسی فایل‌های ریشه وردپرس با پیشوند wp- که در چکسام رسمی وجود ندارند (مانند wp-vhost.php, wp-check.php)
+            $root_wp_files = @glob( $abs_path . 'wp-*.php' );
+            if ( ! empty( $root_wp_files ) ) {
+                foreach ( $root_wp_files as $rf ) {
+                    $rf_norm  = wp_normalize_path( $rf );
+                    $rel_path = ltrim( substr( $rf_norm, strlen( $abs_path ) ), '/' );
+
+                    // فایل‌های مجاز محلی که در چکسام توزیع نیستند
+                    if ( in_array( $rel_path, [ 'wp-config.php', 'wp-config-sample.php' ], true ) ) {
+                        continue;
+                    }
+
+                    if ( ! isset( $checksums[ $rel_path ] ) ) {
+                        $findings[] = new HO_Anti_Finding( [
+                            'scan_id'            => $scan_id,
+                            'engine'             => $this->get_engine_id(),
+                            'rule_id'            => 'CORE_ROOT_UNREFERENCED_PHP',
+                            'rule_version'       => '1.0.0',
+                            'threat_category'    => 'malware',
+                            'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                            'target_type'        => 'core_file',
+                            'target_path'        => $rf_norm,
+                            'evidence'           => [
+                                'detail' => "فایل PHP مشکوک و غیررسمی با پیشوند wp- در ریشه سایت کشف شد ($rel_path).",
+                                'file'   => basename( $rf_norm ),
+                                'relative_path' => $rel_path,
+                            ],
+                            'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                            'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
+                            'local_hash'         => md5_file( $rf_norm ),
+                            'recommended_action' => HO_Anti_Finding::ACTION_DELETE,
+                        ] );
+                    }
+                }
+            }
+
             return $findings;
+        }
+
+        /**
+         * بررسی اینکه آیا یک فایل متعلق به نسخه رسمی وردپرس است یا فایلی ناشناخته و غیررسمی است
+         *
+         * @param string $relative_path مسیر نسبی فایل از ریشه ABSPATH
+         * @param string $version نسخه وردپرس
+         * @return bool|null
+         */
+        public static function is_official_core_file( $relative_path, $version = '' ) {
+            $checksums = self::get_official_core_checksums( $version );
+            if ( false !== $checksums && is_array( $checksums ) ) {
+                $norm = ltrim( str_replace( '\\', '/', $relative_path ), '/' );
+                return isset( $checksums[ $norm ] );
+            }
+            return null;
         }
 
         /**

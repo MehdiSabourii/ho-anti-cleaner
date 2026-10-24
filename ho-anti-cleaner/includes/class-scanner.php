@@ -40,14 +40,17 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
             global $wpdb;
 
             $results = [
-                'timestamp'        => current_time( 'mysql' ),
-                'options'          => [],
-                'tables'           => [],
-                'hidden_users'     => [],
-                'mu_plugins'       => [],
-                'infected_files'   => [],
-                'uploads_php'      => [],
-                'stats'            => [
+                'timestamp'            => current_time( 'mysql' ),
+                'options'              => [],
+                'tables'               => [],
+                'hidden_users'         => [],
+                'mu_plugins'           => [],
+                'infected_files'       => [],
+                'uploads_php'          => [],
+                'core_integrity'       => [],
+                'tampered_siteurl'     => [],
+                'insecure_permissions' => [],
+                'stats'                => [
                     'total_files_scanned' => 0,
                     'threats_count'       => 0,
                 ],
@@ -125,6 +128,89 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
             if ( defined( 'ABSPATH' ) ) {
                 self::scan_core_directory( ABSPATH . 'wp-admin', $results );
                 self::scan_core_directory( ABSPATH . WPINC, $results );
+            }
+
+            // ۸. اعتبارسنجی یکپارچگی فایل‌های هسته (Core File Integrity) و شناسایی فایل‌های غیررسمی
+            if ( class_exists( 'HO_Anti_File_Integrity_Engine' ) ) {
+                $integrity_engine = new HO_Anti_File_Integrity_Engine();
+                if ( $integrity_engine->is_available() ) {
+                    $core_findings = $integrity_engine->scan();
+                    foreach ( $core_findings as $cf ) {
+                        $rule_id = $cf->get_rule_id();
+                        $target_path = $cf->get_target_path();
+                        $rel_path = str_replace( [ ABSPATH, '\\' ], [ '', '/' ], $target_path );
+
+                        if ( 'CORE_FILE_MODIFIED' === $rule_id ) {
+                            $results['core_integrity'][] = [
+                                'type'        => 'modified',
+                                'path'        => $target_path,
+                                'relative'    => $rel_path,
+                                'description' => 'فایل رسمی هسته تغییر یافته است (هش نامعتبر نسبت به WordPress.org)',
+                                'severity'    => 'critical',
+                                'action'      => 'restore_official',
+                            ];
+                            $results['stats']['threats_count']++;
+                        } elseif ( in_array( $rule_id, [ 'CORE_DIR_UNREFERENCED_PHP', 'CORE_ROOT_UNREFERENCED_PHP' ], true ) ) {
+                            $results['core_integrity'][] = [
+                                'type'        => 'unofficial',
+                                'path'        => $target_path,
+                                'relative'    => $rel_path,
+                                'description' => 'فایل غیررسمی یا ناشناخته در هسته وردپرس (توصیه: حذف شود)',
+                                'severity'    => 'critical',
+                                'action'      => 'delete_unofficial',
+                            ];
+                            $results['stats']['threats_count']++;
+                        }
+                    }
+                }
+            }
+
+            // ۹. بررسی دستکاری آدرس اصلی سایت (Site URL / Home Hijacking)
+            $siteurl = get_option( 'siteurl', '' );
+            $home    = get_option( 'home', '' );
+            $tampered_pat = '/(?:\.ru|\.top|\.xyz|\.click|\.pw|\.cc|\.ws|ngrok|\/gate|\/evil|0x[0-9a-f]{40})/i';
+            foreach ( [ 'siteurl' => $siteurl, 'home' => $home ] as $key => $val ) {
+                if ( empty( $val ) || ! is_string( $val ) ) {
+                    continue;
+                }
+                $trusted = get_option( 'ho_anti_trusted_' . $key, '' );
+                $mismatch = ( ! empty( $trusted ) && parse_url( $val, PHP_URL_HOST ) !== parse_url( $trusted, PHP_URL_HOST ) );
+                if ( preg_match( $tampered_pat, $val ) || $mismatch ) {
+                    $results['tampered_siteurl'][] = [
+                        'option'        => $key,
+                        'current_value' => $val,
+                        'trusted_value' => $trusted,
+                        'severity'      => 'critical',
+                    ];
+                    $results['stats']['threats_count']++;
+                }
+            }
+
+            // ۱۰. بررسی سطوح دسترسی ناامن فایل‌های حساس (0666 / 0777)
+            if ( class_exists( 'HO_Anti_Persistence_Engine' ) ) {
+                $perm_findings = HO_Anti_Persistence_Engine::scan_insecure_permissions( 'quick_scan' );
+                foreach ( $perm_findings as $pf ) {
+                    $ev = $pf->get_evidence();
+                    $results['insecure_permissions'][] = [
+                        'path'          => $pf->get_target_path(),
+                        'relative'      => str_replace( [ ABSPATH, '\\' ], [ '', '/' ], $pf->get_target_path() ),
+                        'current_perms' => isset( $ev['current_perms'] ) ? $ev['current_perms'] : '',
+                        'severity'      => 'high',
+                    ];
+                    $results['stats']['threats_count']++;
+                }
+            }
+
+            // ثبت خلاصه نتایج اسکن در رویدادهای امنیتی
+            if ( class_exists( 'HO_Anti_Protection' ) ) {
+                HO_Anti_Protection::record_security_event(
+                    'scan_completed',
+                    "اسکن سیستم پایان یافت: {$results['stats']['total_files_scanned']} فایل بررسی شد و {$results['stats']['threats_count']} مورد تهدید/ناهماهنگی شناسایی گردید.",
+                    [
+                        'threats_count' => $results['stats']['threats_count'],
+                        'core_issues'   => count( $results['core_integrity'] ),
+                    ]
+                );
             }
 
             return $results;
@@ -371,6 +457,31 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                 $hits[] = 'تزریق ریدایرکت مخرب جاوااسکریپت به دامنه‌های اسپم';
             }
 
+            // ۷. بدافزار بلاکچین و وب۳ اسمارت کانترکت C2 (EtherHiding Campaign)
+            if ( preg_match( '/(?:polygon-bor-rpc|1rpc\.io|0xb29927B7D854b232D5E58CFc201866376E68C676|0x2cae8ae4|eth_call)/i', $content ) ) {
+                $hits[] = 'بدافزار بلاکچین EtherHiding / Web3 Smart Contract C2';
+            }
+
+            // ۸. فریب مهندسی اجتماعی ClickFix و فیک کپچا
+            if ( preg_match( '/(?:Verify you are human|powershell.*(?:-w\s+hidden|-enc\s+)|ClickFix)/i', $content ) ) {
+                $hits[] = 'حمله مهندسی اجتماعی ClickFix / Fake Recaptcha';
+            }
+
+            // ۹. دورزدن کش و بررسی کوکی ورود مدیر (data-no-optimize + wp-settings)
+            if ( preg_match( '/data-no-optimize=[\'"]1[\'"].*?(?:wp-settings|wpadminbar)/is', $content ) ) {
+                $hits[] = 'تکنیک دورزدن افزونه کش و بررسی کوکی ورود مدیر (Evasion)';
+            }
+
+            // ۱۰. دستکاری لیست افزونه‌ها جهت مخفی‌سازی بدافزار (Hiding Malicious Plugins from Table)
+            if ( preg_match( '/remove_action\s*\(\s*[\'"]all_plugins[\'"]|all_plugins.*unset\s*\(/is', $content ) ) {
+                $hits[] = 'دستکاری هوک‌های پیشخوان جهت مخفی‌سازی افزونه مخرب از لیست افزونه‌ها';
+            }
+
+            // ۱۱. ساخت کاربر مدیر درپشتی در فایل‌های متفرقه
+            if ( preg_match( '/(?:wp_create_user|wp_insert_user)\s*\(.*?(?:administrator)/is', $content ) ) {
+                $hits[] = 'تلاش برای ایجاد مخفیانه کاربر با نقش مدیر کل (Rogue Admin Creator)';
+            }
+
             return $hits;
         }
 
@@ -380,18 +491,33 @@ if ( ! class_exists( 'HO_Anti_Scanner' ) ) {
                 return;
             }
 
-            $head_chunk = @file_get_contents( $full_path, false, null, 0, min( 6144, $size ) );
-            $tail_chunk = '';
-            if ( $size > 6144 ) {
-                $offset = max( 0, $size - 16384 );
+            // برای فایل‌های تا ۵ مگابایت، کل محتوای فایل را می‌خوانیم تا هیچ بدافزاری در میانه فایل نادیده گرفته نشود
+            if ( $size <= 5242880 ) {
+                $full_content = @file_get_contents( $full_path );
+                $head_chunk   = substr( $full_content, 0, 6144 );
+                $tail_chunk   = $size > 6144 ? substr( $full_content, -16384 ) : '';
+                $combined     = $full_content;
+            } else {
+                $head_chunk = @file_get_contents( $full_path, false, null, 0, 6144 );
+                $offset     = max( 0, $size - 16384 );
                 $tail_chunk = @file_get_contents( $full_path, false, null, $offset, 16384 );
+                $combined   = $head_chunk . ' ' . $tail_chunk;
             }
 
-            $combined = $head_chunk . ' ' . $tail_chunk;
-            $matched_sigs = self::check_content_signatures( $combined );
+            $matched_sigs       = self::check_content_signatures( $combined );
             $matched_heuristics = self::check_generic_heuristics( $combined, $full_path );
+            $all_hits           = array_merge( $matched_sigs, $matched_heuristics );
 
-            $all_hits = array_merge( $matched_sigs, $matched_heuristics );
+            // آزمون تطبیق با کاتالوگ قواعد استاندارد Gravity Malware Engine
+            if ( class_exists( 'HO_Anti_Malware_Engine' ) ) {
+                $rules = HO_Anti_Malware_Engine::get_rule_definitions();
+                foreach ( $rules as $r ) {
+                    if ( preg_match( $r['pattern'], $combined ) ) {
+                        $all_hits[] = $r['description'];
+                    }
+                }
+            }
+            $all_hits = array_unique( $all_hits );
 
             if ( ! empty( $all_hits ) ) {
                 $is_injected_top = false;
