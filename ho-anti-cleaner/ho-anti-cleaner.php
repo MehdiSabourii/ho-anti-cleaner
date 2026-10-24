@@ -3,7 +3,7 @@
  * Plugin Name: HO Anti Cleaner & Security Shield
  * Plugin URI:  https://wordpress.org
  * Description: ابزار پیشرفته ضد بدافزار، جراحی کدهای مخرب ورودی و گیت‌کیپرها، قفل ضد بازنویسی فایل‌ها و بهینه‌سازی دیتابیس وردپرس.
- * Version:     3.2.0
+ * Version:     3.3.0
  * Author:      ho mehdi sabour
  * Author URI:  https://wordpress.org
  * Text Domain: ho-anti-cleaner
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // تعریف ایمن ثوابت افزونه
-if ( ! defined( 'HO_ANTI_VERSION' ) )     define( 'HO_ANTI_VERSION', '3.2.0' );
+if ( ! defined( 'HO_ANTI_VERSION' ) )     define( 'HO_ANTI_VERSION', '3.3.0' );
 if ( ! defined( 'HO_ANTI_PLUGIN_FILE' ) ) define( 'HO_ANTI_PLUGIN_FILE', __FILE__ );
 if ( ! defined( 'HO_ANTI_PLUGIN_DIR' ) )  define( 'HO_ANTI_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'HO_ANTI_PLUGIN_URL' ) )  define( 'HO_ANTI_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

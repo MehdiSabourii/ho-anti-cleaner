@@ -117,6 +117,28 @@ if ( ! function_exists( 'is_user_logged_in' ) ) {
     }
 }
 
+if ( ! function_exists( 'wp_remote_get' ) ) {
+    function wp_remote_get( $url, $args = [] ) {
+        // Mock simple response or return 404 in isolated unit test sandbox
+        return [
+            'response' => [ 'code' => 404 ],
+            'body'     => '',
+        ];
+    }
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_response_code' ) ) {
+    function wp_remote_retrieve_response_code( $response ) {
+        return isset( $response['response']['code'] ) ? (int) $response['response']['code'] : 404;
+    }
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_body' ) ) {
+    function wp_remote_retrieve_body( $response ) {
+        return isset( $response['body'] ) ? $response['body'] : '';
+    }
+}
+
 if ( ! class_exists( 'WP_Error' ) ) {
     class WP_Error {
         public $errors = [];
@@ -465,6 +487,55 @@ $safe_endpoints = $protection->filter_rest_user_enumeration( $test_endpoints );
 assert_test(
     'ضد نشت نام کاربری: حذف اندپوینت‌های /wp/v2/users برای کاربران غیرمجاز',
     ! isset( $safe_endpoints['/wp/v2/users'] ) && isset( $safe_endpoints['/wp/v2/posts'] )
+);
+
+// ==========================================
+// بخش هفتم: جراحی تزریق‌های پیشرفته و داده‌های UI
+// ==========================================
+echo "\n--- 7. آزمون‌های جراحی تزریق‌های پیشرفته و یکپارچگی داده‌های UI ---\n";
+
+// ۷.۱: جراحی تگ اسکریپت EtherHiding تزریق شده به فایل PHP
+$eh_plugin_file = $sandbox_dir . '/test-eh-repair.php';
+$eh_injected_code = "<?php\n// Legitimate plugin code\necho 'Plugin Loaded';\n?>\n<script type=\"text/javascript\" src=\"https://polygon-bor-rpc.publicnode.com/c2.js\"></script>";
+file_put_contents( $eh_plugin_file, $eh_injected_code );
+$eh_repair_res = HO_Anti_Safe_Repair::targeted_surgical_repair( $eh_plugin_file );
+$eh_cleaned_content = file_get_contents( $eh_plugin_file );
+assert_test(
+    'جراحی هوشمند: حذف اسکریپت تزریقی EtherHiding / Web3 C2 بدون تخریب کد PHP',
+    ! empty( $eh_repair_res['success'] ) && false === strpos( $eh_cleaned_content, 'polygon-bor-rpc' ) && false !== strpos( $eh_cleaned_content, 'Plugin Loaded' )
+);
+
+// ۷.۲: جراحی اینجکشن هدر eval(base64_decode)
+$eval_header_file = $sandbox_dir . '/test-eval-repair.php';
+$eval_injected_code = "<?php /* mal_header */ eval(base64_decode('ZWNobyAnYmFja2Rvb3InOw==')); ?>\n<?php\n// Plugin Main\necho 'Hello World';\n";
+file_put_contents( $eval_header_file, $eval_injected_code );
+$eval_repair_res = HO_Anti_Safe_Repair::targeted_surgical_repair( $eval_header_file );
+$eval_cleaned_content = file_get_contents( $eval_header_file );
+$eval_syntax = HO_Anti_Safe_Repair::validate_php_syntax( $eval_cleaned_content );
+assert_test(
+    'جراحی هدر: حذف بلاک ارزیابی پویای eval تزریق‌شده در ابتدای فایل و حفظ سلامت سینتکس',
+    ! empty( $eval_repair_res['success'] ) && false === strpos( $eval_cleaned_content, 'base64_decode' ) && $eval_syntax['valid']
+);
+
+// ۷.۳: بررسی داده‌های فرمت‌شده برای UI (عدم وجود مقادیر نامعتبر یا undefined)
+$sample_finding = [
+    'id'                 => 'find_test_1',
+    'rule_id'            => 'AST_EVAL_DECODER_CHAIN',
+    'target_type'        => 'file',
+    'target_path'        => $eval_header_file,
+    'evidence'           => [ 'detail' => 'اجرای پویای کد رمزگشایی‌شده در خط 1' ],
+    'severity'           => 'critical',
+    'recommended_action' => 'targeted_repair',
+];
+$ui_data = HO_Anti_Batch_Scanner::format_findings_for_ui( [ $sample_finding ], 100 );
+$first_infected = isset( $ui_data['infected_files'][0] ) ? $ui_data['infected_files'][0] : null;
+assert_test(
+    'قرارداد داده‌های UI: صحت سایز فایل، امضاها، و پرچم‌های تعمیر بدون فیلد گم‌شده',
+    $first_infected !== null &&
+    ! empty( $first_infected['size'] ) && '-' !== $first_infected['size'] &&
+    ! empty( $first_infected['signatures'] ) &&
+    isset( $first_infected['safe_repairable'] ) &&
+    isset( $first_infected['is_core'] )
 );
 
 

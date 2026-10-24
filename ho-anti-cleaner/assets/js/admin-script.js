@@ -307,24 +307,39 @@ jQuery(document).ready(function ($) {
         files.forEach(function (f) {
             var typeBadge = '';
             var actionBtn = '';
+            var displaySize = f.size || f.file_size || '-';
+            var displaySignatures = f.signatures || (Array.isArray(f.patterns) ? f.patterns.join(' | ') : f.patterns) || 'شناسایی اکتشافی';
 
-            if (f.is_injected_top) {
+            if (f.is_core) {
+                typeBadge = '<span class="afc-badge afc-badge-danger">فایل رسمی هسته وردپرس (آلوده‌شده)</span>';
+                actionBtn = '<button class="button button-small button-primary afc-btn-restore-core" data-path="' + f.path + '" style="margin-left:5px;"><span class="dashicons dashicons-update"></span> بازگردانی از WordPress.org</button>' +
+                            '<button class="button button-small afc-btn-diff" data-path="' + f.path + '" style="margin-left:5px;"><span class="dashicons dashicons-visibility"></span> مشاهده تفاوت (Diff)</button>' +
+                            '<button class="button button-small button-secondary afc-btn-repair-single" data-path="' + f.path + '">جراحی خودکار</button>';
+            } else if (f.is_injected_top) {
                 typeBadge = '<span class="afc-badge afc-badge-danger">گیت‌کیپر ورود / مسدودکننده (بالای فایل)</span>';
-                actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '" style="background:#16a34a; border-color:#15803d;">جراحی و ترمیم فوری</button>';
+                actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '" style="background:#16a34a; border-color:#15803d;"><span class="dashicons dashicons-shield"></span> جراحی و ترمیم فوری</button>';
             } else if (f.is_assetflow) {
-                var typeLabel = f.is_injected_bottom ? 'الحاق Asset Flow (قابل جراحی)' : 'فایل مستقل بدافزار Asset Flow';
+                var typeLabel = f.is_injected_bottom ? 'الحاق Asset Flow (قابل جراحی)' : 'فایل بدافزار Asset Flow';
                 typeBadge = '<span class="afc-badge afc-badge-danger">' + typeLabel + '</span>';
-                actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '">ترمیم و جراحی</button>';
+                actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '"><span class="dashicons dashicons-shield"></span> ترمیم و جراحی</button>';
+            } else if (f.is_plugin) {
+                typeBadge = '<span class="afc-badge afc-badge-warning">کد مخرب تزریق‌شده در افزونه</span>';
+                actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '" style="margin-left:5px; background:#16a34a; border-color:#15803d;"><span class="dashicons dashicons-shield"></span> جراحی و ترمیم امن</button>' +
+                            '<button class="button button-small button-link-delete afc-btn-delete-upload-file" data-path="' + f.path + '"><span class="dashicons dashicons-trash"></span> قرنطینه فایل</button>';
+            } else if (f.is_theme) {
+                typeBadge = '<span class="afc-badge afc-badge-warning">کد مخرب تزریق‌شده در قالب</span>';
+                actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '" style="margin-left:5px; background:#16a34a; border-color:#15803d;"><span class="dashicons dashicons-shield"></span> جراحی و ترمیم امن</button>' +
+                            '<button class="button button-small button-link-delete afc-btn-delete-upload-file" data-path="' + f.path + '"><span class="dashicons dashicons-trash"></span> قرنطینه فایل</button>';
             } else {
-                typeBadge = '<span class="afc-badge afc-badge-warning">وب‌شل / اسکریپت مخرب (اکتشافی)</span>';
-                actionBtn = '<button class="button button-small button-danger afc-btn-delete-upload-file" data-path="' + f.path + '" style="margin-left:5px;">حذف فایل</button>' +
-                            '<button class="button button-small button-secondary afc-btn-repair-single" data-path="' + f.path + '">تلاش برای ترمیم</button>';
+                typeBadge = '<span class="afc-badge afc-badge-danger">وب‌شل / اسکریپت مخرب</span>';
+                actionBtn = '<button class="button button-small button-primary afc-btn-repair-single" data-path="' + f.path + '" style="margin-left:5px;"><span class="dashicons dashicons-shield"></span> تلاش برای ترمیم</button>' +
+                            '<button class="button button-small button-danger afc-btn-delete-upload-file" data-path="' + f.path + '"><span class="dashicons dashicons-trash"></span> حذف با قرنطینه</button>';
             }
 
             html += '<tr data-filepath="' + f.path + '">' +
                 '<td><code>' + f.relative + '</code></td>' +
-                '<td>' + f.size + '</td>' +
-                '<td>' + typeBadge + ' <small style="display:block; color:#64748b; margin-top:4px;">' + f.signatures + '</small></td>' +
+                '<td>' + displaySize + '</td>' +
+                '<td>' + typeBadge + ' <small style="display:block; color:#64748b; margin-top:4px;">' + displaySignatures + '</small></td>' +
                 '<td>' + actionBtn + '</td>' +
                 '</tr>';
         });
@@ -470,10 +485,16 @@ jQuery(document).ready(function ($) {
     $(document).on('click', '.afc-btn-repair-single', function (e) {
         e.preventDefault();
         var $btn = $(this);
-        var filePath = $btn.data('path');
+        var filePath = $btn.data('path') || $btn.data('file-path') || $btn.attr('data-path') || $btn.attr('data-file-path');
         var $row = $btn.closest('tr');
 
+        if (!filePath) {
+            alert('مسیر فایل نامعتبر است.');
+            return;
+        }
+
         $btn.prop('disabled', true).text('در حال ترمیم...');
+        logMessage('در حال جراحی و ترمیم امن فایل: ' + filePath, 'system');
 
         $.ajax({
             url: afcData.ajax_url,
@@ -487,17 +508,18 @@ jQuery(document).ready(function ($) {
             success: function (response) {
                 if (response.success) {
                     $row.css('background', '#dcfce7');
-                    $btn.replaceWith('<span class="afc-badge afc-badge-safe">ترمیم شد</span>');
-                    logMessage('فایل ترمیم شد: ' + filePath, 'success');
+                    $btn.replaceWith('<span class="afc-badge afc-badge-safe"><span class="dashicons dashicons-yes"></span> ترمیم شد</span>');
+                    logMessage('فایل ترمیم شد: ' + filePath + ' (' + (response.data.message || '') + ')', 'success');
+                    alert(response.data.message || 'فایل با موفقیت ترمیم شد.');
                 } else {
                     $btn.prop('disabled', false).text('تلاش مجدد');
-                    alert(response.data.message);
-                    logMessage('خطا در ترمیم فایل: ' + filePath + ' (' + response.data.message + ')', 'danger');
+                    alert(response.data.message || 'خطا در ترمیم فایل');
+                    logMessage('خطا در ترمیم فایل: ' + filePath + ' (' + (response.data.message || '') + ')', 'danger');
                 }
             },
             error: function () {
                 $btn.prop('disabled', false).text('تلاش مجدد');
-                alert(afcData.strings.error_occurred);
+                alert(afcData.strings.error_occurred || 'خطایی در ارتباط با سرور رخ داد.');
             }
         });
     });
@@ -936,42 +958,14 @@ jQuery(document).ready(function ($) {
         });
     });
 
-    // بازگردانی فایل هسته از منبع رسمی WordPress.org
-    $(document).on('click', '.afc-btn-restore-core', function (e) {
+    // مشاهده تفاوت فایل (Diff Viewer)
+    $(document).on('click', '.afc-btn-view-diff, .afc-btn-diff', function (e) {
         e.preventDefault();
-        var $btn = $(this);
-        var filePath = $btn.data('file-path');
-        var findingId = $btn.data('finding-id');
-
-        if (!confirm('فایل آلوده ابتدا در قرنطینه امن ذخیره شده و سپس با نسخه رسمی WordPress.org جایگزین می‌شود. ادامه می‌دهید؟')) {
+        var filePath = $(this).data('path') || $(this).data('file-path') || $(this).attr('data-path') || $(this).attr('data-file-path');
+        if (!filePath) {
+            alert('مسیر فایل نامعتبر است.');
             return;
         }
-
-        $btn.prop('disabled', true).text('در حال دریافت نسخه رسمی...');
-        logMessage('درخواست دانلود و جایگزینی فایل هسته: ' + filePath, 'system');
-
-        $.post(afcData.ajax_url, {
-            action: 'afc_restore_core_file',
-            nonce: afcData.nonce,
-            file_path: filePath,
-            finding_id: findingId
-        }, function (res) {
-            if (res.success) {
-                logMessage(res.data.message, 'success');
-                alert(res.data.message);
-                $btn.replaceWith('<span style="color:#16a34a; font-weight:bold;">ترمیم شد</span>');
-            } else {
-                logMessage('خطا: ' + (res.data.message || 'خطا در بازگردانی'), 'error');
-                alert(res.data.message || 'خطا در بازگردانی');
-                $btn.prop('disabled', false).text('تلاش مجدد');
-            }
-        });
-    });
-
-    // مشاهده تفاوت فایل (Diff Viewer)
-    $(document).on('click', '.afc-btn-view-diff', function (e) {
-        e.preventDefault();
-        var filePath = $(this).data('file-path');
 
         logMessage('در حال دریافت گزارش تفاوت (Diff) برای: ' + filePath, 'system');
         $.post(afcData.ajax_url, {
@@ -980,7 +974,7 @@ jQuery(document).ready(function ($) {
             file_path: filePath
         }, function (res) {
             if (res.success) {
-                alert("تفاوت فایل محلی با نسخه رسمی WordPress.org:\n\n" + res.data.diff);
+                alert("تفاوت فایل محلی با نسخه رسمی WordPress.org:\n\n" + (res.data.diff || 'تغییری مشاهده نشد یا فایل یکسان است.'));
             } else {
                 alert(res.data.message || 'خطا در محاسبه Diff');
             }
@@ -1059,8 +1053,12 @@ jQuery(document).ready(function ($) {
     $(document).on('click', '.afc-btn-restore-core', function (e) {
         e.preventDefault();
         var $btn = $(this);
-        var path = $btn.data('path');
-        if (!confirm('آیا از بازگردانی این فایل با نسخه رسمی و دست‌نخورده از سرور رسمی WordPress.org اطمینان دارید؟')) return;
+        var path = $btn.data('path') || $btn.data('file-path') || $btn.attr('data-path') || $btn.attr('data-file-path');
+        if (!path) {
+            alert('مسیر فایل نامعتبر است.');
+            return;
+        }
+        if (!confirm('آیا از بازگردانی این فایل با نسخه رسمی و دست‌نخورده از سرور رسمی WordPress.org اطمینان دارید؟ نسخه آلوده ابتدا به عنوان پشتیبان در قرنطینه امن ذخیره خواهد شد.')) return;
 
         $btn.prop('disabled', true).text('در حال دریافت از WordPress.org...');
         logMessage('در حال بازگردانی فایل رسمی هسته: ' + path, 'system');
@@ -1077,9 +1075,11 @@ jQuery(document).ready(function ($) {
             success: function (res) {
                 if (res.success) {
                     logMessage(res.data.message, 'success');
+                    alert(res.data.message);
                     $btn.closest('tr').fadeOut(400, function () { $(this).remove(); });
                 } else {
                     logMessage('خطا در بازگردانی: ' + (res.data.message || 'خطای نامشخص'), 'danger');
+                    alert(res.data.message || 'خطا در بازگردانی');
                     $btn.prop('disabled', false).text('تلاش مجدد');
                 }
             },
@@ -1094,7 +1094,11 @@ jQuery(document).ready(function ($) {
     $(document).on('click', '.afc-btn-delete-core', function (e) {
         e.preventDefault();
         var $btn = $(this);
-        var path = $btn.data('path');
+        var path = $btn.data('path') || $btn.data('file-path') || $btn.attr('data-path') || $btn.attr('data-file-path');
+        if (!path) {
+            alert('مسیر فایل نامعتبر است.');
+            return;
+        }
         if (!confirm('آیا از حذف این فایل غیررسمی اطمینان دارید؟ نسخه پشتیبان قبل از حذف به صورت امن در قرنطینه ذخیره خواهد شد.')) return;
 
         $btn.prop('disabled', true).text('در حال حذف...');

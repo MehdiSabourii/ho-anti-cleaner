@@ -369,14 +369,34 @@ if ( ! class_exists( 'HO_Anti_Batch_Scanner' ) ) {
                 if ( isset( $ev['detail'] ) )     $patterns[] = $ev['detail'];
                 if ( empty( $patterns ) )         $patterns[] = $rule_id;
 
+                $is_core   = ( 0 === strpos( $rel, 'wp-admin/' ) || 0 === strpos( $rel, 'wp-includes/' ) || in_array( $rel, [ 'index.php', 'wp-activate.php', 'wp-blog-header.php', 'wp-comments-post.php', 'wp-cron.php', 'wp-links-opml.php', 'wp-load.php', 'wp-login.php', 'wp-mail.php', 'wp-settings.php', 'wp-signup.php', 'wp-trackback.php', 'xmlrpc.php' ], true ) );
+                $is_plugin = ( false !== strpos( $norm_path, '/plugins/' ) );
+                $is_theme  = ( false !== strpos( $norm_path, '/themes/' ) );
+                $pat_str   = implode( ' | ', array_unique( $patterns ) );
+
+                $file_size_formatted = '-';
+                if ( file_exists( $norm_path ) ) {
+                    $bytes = @filesize( $norm_path );
+                    if ( false !== $bytes ) {
+                        $file_size_formatted = function_exists( 'size_format' ) ? size_format( $bytes ) : ( round( $bytes / 1024, 1 ) . ' KB' );
+                    }
+                }
+
                 $ui['infected_files'][] = [
                     'finding_id'      => isset( $f['id'] ) ? $f['id'] : '',
                     'filename'        => basename( $norm_path ),
                     'path'            => $norm_path,
                     'relative'        => $rel,
+                    'size'            => $file_size_formatted,
+                    'signatures'      => ! empty( $pat_str ) ? $pat_str : 'وب‌شل / اسکریپت مشکوک',
                     'patterns'        => array_unique( $patterns ),
                     'severity'        => $sev,
-                    'safe_repairable' => ( 'targeted_repair' === ( isset( $f['recommended_action'] ) ? $f['recommended_action'] : '' ) ),
+                    'safe_repairable' => ( 'targeted_repair' === ( isset( $f['recommended_action'] ) ? $f['recommended_action'] : '' ) ) || $is_core || $is_plugin,
+                    'is_core'         => $is_core,
+                    'is_plugin'       => $is_plugin,
+                    'is_theme'        => $is_theme,
+                    'is_injected_top' => false !== strpos( $pat_str, 'گیت‌کیپر' ) || false !== strpos( $pat_str, 'GATEKEEPER' ),
+                    'is_assetflow'    => false !== strpos( $pat_str, 'ASSET_FLOW' ),
                 ];
             }
 

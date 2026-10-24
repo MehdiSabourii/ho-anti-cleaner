@@ -88,7 +88,7 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
         }
 
         private function normalize_incoming_path( $raw_path ) {
-            if ( empty( $raw_path ) ) {
+            if ( empty( $raw_path ) || 'undefined' === $raw_path ) {
                 return '';
             }
             $clean = str_replace( '\\', '/', (string) $raw_path );
@@ -114,14 +114,18 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             $file_path = $this->normalize_incoming_path( $raw );
 
             if ( empty( $file_path ) ) {
-                wp_send_json_error( [ 'message' => 'مسیر فایل مشخص نشده است.' ] );
+                wp_send_json_error( [ 'message' => 'مسیر فایل مشخص نشده یا نامعتبر است.' ] );
             }
 
-            $res = HO_Anti_Cleaner::repair_single_file( $file_path );
-            if ( ! empty( $res['success'] ) ) {
-                wp_send_json_success( $res );
-            } else {
-                wp_send_json_error( $res );
+            try {
+                $res = HO_Anti_Cleaner::repair_single_file( $file_path );
+                if ( ! empty( $res['success'] ) ) {
+                    wp_send_json_success( $res );
+                } else {
+                    wp_send_json_error( $res );
+                }
+            } catch ( Throwable $t ) {
+                wp_send_json_error( [ 'message' => 'خطای سیستمی در ترمیم فایل: ' . $t->getMessage() ] );
             }
         }
 
@@ -367,12 +371,19 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             $this->verify_permissions();
             $raw = isset( $_POST['file_path'] ) ? $_POST['file_path'] : '';
             $file_path = $this->normalize_incoming_path( $raw );
+            if ( empty( $file_path ) ) {
+                wp_send_json_error( [ 'message' => 'مسیر فایل مشخص نشده یا نامعتبر است.' ] );
+            }
             $finding_id = isset( $_POST['finding_id'] ) ? sanitize_text_field( $_POST['finding_id'] ) : '';
-            $res = HO_Anti_Safe_Repair::restore_core_file_from_official( $file_path, $finding_id );
-            if ( ! empty( $res['success'] ) ) {
-                wp_send_json_success( $res );
-            } else {
-                wp_send_json_error( $res );
+            try {
+                $res = HO_Anti_Safe_Repair::restore_core_file_from_official( $file_path, $finding_id );
+                if ( ! empty( $res['success'] ) ) {
+                    wp_send_json_success( $res );
+                } else {
+                    wp_send_json_error( $res );
+                }
+            } catch ( Throwable $t ) {
+                wp_send_json_error( [ 'message' => 'خطای سیستمی در بازگردانی فایل هسته: ' . $t->getMessage() ] );
             }
         }
 
@@ -380,11 +391,18 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             $this->verify_permissions();
             $raw = isset( $_POST['file_path'] ) ? $_POST['file_path'] : '';
             $file_path = $this->normalize_incoming_path( $raw );
-            $res = HO_Anti_File_Integrity_Engine::get_file_diff( $file_path );
-            if ( ! empty( $res['success'] ) ) {
-                wp_send_json_success( $res );
-            } else {
-                wp_send_json_error( $res );
+            if ( empty( $file_path ) ) {
+                wp_send_json_error( [ 'message' => 'مسیر فایل مشخص نشده یا نامعتبر است.' ] );
+            }
+            try {
+                $res = HO_Anti_File_Integrity_Engine::get_file_diff( $file_path );
+                if ( ! empty( $res['success'] ) ) {
+                    wp_send_json_success( $res );
+                } else {
+                    wp_send_json_error( $res );
+                }
+            } catch ( Throwable $t ) {
+                wp_send_json_error( [ 'message' => 'خطای سیستمی در محاسبه تفاوت فایل: ' . $t->getMessage() ] );
             }
         }
 
