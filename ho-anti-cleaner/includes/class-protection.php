@@ -47,6 +47,11 @@ if ( ! class_exists( 'HO_Anti_Protection' ) ) {
             add_filter( 'pre_update_option_home',    [ $this, 'guard_siteurl_option' ], 10, 2 );
             add_filter( 'option_siteurl',            [ $this, 'filter_tampered_siteurl' ] );
             add_filter( 'option_home',               [ $this, 'filter_tampered_siteurl' ] );
+
+            // ۷. سپر محافظت از صفحه ورود و ثبت‌نام (Login & Registration Shield)
+            if ( get_option( 'ho_anti_login_protection_enabled', 1 ) ) {
+                $this->init_login_protection();
+            }
         }
 
         /**
@@ -737,6 +742,150 @@ if ( ! class_exists( 'HO_Anti_Protection' ) ) {
             }
 
             return $cleaned;
+        }
+
+        /**
+         * ۷. مقداردهی اولیه سپر محافظت از صفحه ورود و ثبت‌نام (Login & Anti-BruteForce Shield)
+         */
+        public function init_login_protection() {
+            // الف) فرم ورود و ثبت‌نام: فیلد عسل‌پاشی نامرئی (Honeypot)
+            add_action( 'login_form',            [ $this, 'render_login_honeypot' ] );
+            add_action( 'register_form',         [ $this, 'render_login_honeypot' ] );
+
+            // ب) احراز هویت ورود و مهار حملات Brute-Force
+            add_filter( 'authenticate',          [ $this, 'guard_authenticate' ], 25, 3 );
+            add_action( 'wp_login_failed',       [ $this, 'handle_failed_login' ] );
+            add_action( 'wp_login',              [ $this, 'handle_successful_login' ], 10, 2 );
+
+            // ج) اعتبارسنجی فرم ثبت‌نام
+            add_filter( 'registration_errors',   [ $this, 'guard_registration' ], 10, 3 );
+
+            // د) مسدودسازی اسکن نام‌های کاربری (Author Enumeration)
+            add_action( 'template_redirect',     [ $this, 'prevent_author_enumeration' ] );
+            add_filter( 'rest_endpoints',        [ $this, 'filter_rest_user_enumeration' ] );
+
+            // ه) سخت‌سازی و مسدودسازی Pingback های XML-RPC
+            add_filter( 'xmlrpc_methods',        [ $this, 'harden_xmlrpc_methods' ] );
+        }
+
+        public function render_login_honeypot() {
+            echo '<p style="display:none !important;" class="ho-anti-hp-field">' .
+                 '<label for="ho_anti_hp_shield">Leave this field blank</label>' .
+                 '<input type="text" name="ho_anti_hp_shield" id="ho_anti_hp_shield" value="" autocomplete="off" tabindex="-1" aria-hidden="true" />' .
+                 '</p>';
+        }
+
+        public function guard_authenticate( $user, $username, $password ) {
+            // ۱. بررسی فیلد تله بات
+            if ( ! empty( $_POST['ho_anti_hp_shield'] ) ) {
+                self::record_security_event(
+                    'login_honeypot_triggered',
+                    "تلاش ربات جهت ارسال فرم ورود با پر کردن فیلد تله Honeypot شناسایی و مسدود شد. (نام کاربری هدف: $username)",
+                    [
+                        'ip'       => self::get_client_ip(),
+                        'username' => $username,
+                    ]
+                );
+                return new WP_Error( 'ho_anti_bot_detected', '<strong>خطای امنیتی</strong>: دسترسی خودکار بات شناسایی و مسدود گردید.' );
+            }
+
+            // ۲. بررسی مسدودسازی موقت آی‌پی (IP Lockout)
+            $ip = self::get_client_ip();
+            $lockout = get_transient( 'ho_anti_lockout_' . md5( $ip ) );
+            if ( ! empty( $lockout ) && time() < (int) $lockout ) {
+                $mins = max( 1, ceil( ( (int) $lockout - time() ) / 60 ) );
+                self::record_security_event(
+                    'login_locked_ip_rejected',
+                    "درخواست ورود از آدرس مسدودشده ({$ip}) به دلیل تکرار تلاش‌های ناموفق مهار شد.",
+                    [
+                        'ip'             => $ip,
+                        'remaining_mins' => $mins,
+                    ]
+                );
+                return new WP_Error( 'ho_anti_ip_locked', sprintf( '<strong>سپر ضد Brute-Force وردپرس</strong>: آدرس IP شما به دلیل ۵ بار تلاش ناموفق پیاپی موقتاً مسدود گردیده است. لطفاً %d دقیقه دیگر مجدداً اقدام فرمایید.', $mins ) );
+            }
+
+            return $user;
+        }
+
+        public function handle_failed_login( $username ) {
+            $ip = self::get_client_ip();
+            $key = 'ho_anti_fail_count_' . md5( $ip );
+            $fails = (int) get_transient( $key );
+            $fails++;
+            set_transient( $key, $fails, 900 ); // پنجره زمانی ۱۵ دقیقه‌ای
+
+            if ( $fails >= 5 ) {
+                $lock_duration = 900; // مسدودسازی ۱۵ دقیقه‌ای
+                set_transient( 'ho_anti_lockout_' . md5( $ip ), time() + $lock_duration, $lock_duration );
+                self::record_security_event(
+                    'login_bruteforce_lockout',
+                    "آدرس IP ({$ip}) به دلیل ۵ تلاش ناموفق پیاپی در ورود به حساب کاربری ({$username}) به مدت ۱۵ دقیقه مسدود شد.",
+                    [
+                        'ip'       => $ip,
+                        'username' => $username,
+                        'fails'    => $fails,
+                    ]
+                );
+            }
+        }
+
+        public function handle_successful_login( $user_login, $user = null ) {
+            $ip = self::get_client_ip();
+            delete_transient( 'ho_anti_fail_count_' . md5( $ip ) );
+            delete_transient( 'ho_anti_lockout_' . md5( $ip ) );
+        }
+
+        public function guard_registration( $errors, $sanitized_user_login, $user_email ) {
+            if ( ! empty( $_POST['ho_anti_hp_shield'] ) ) {
+                if ( ! is_wp_error( $errors ) ) {
+                    $errors = new WP_Error();
+                }
+                $errors->add( 'ho_anti_bot_registration', '<strong>خطای امنیتی</strong>: ثبت‌نام خودکار توسط ربات شناسایی و مسدود شد.' );
+                self::record_security_event(
+                    'register_honeypot_triggered',
+                    "تلاش ربات برای ساخت اکانت با فیلد تله (نام کاربری: $sanitized_user_login, ایمیل: $user_email) مسدود شد.",
+                    [ 'ip' => self::get_client_ip() ]
+                );
+            }
+            return $errors;
+        }
+
+        public function prevent_author_enumeration() {
+            if ( is_admin() || is_user_logged_in() ) {
+                return;
+            }
+
+            if ( isset( $_REQUEST['author'] ) || ( function_exists( 'is_author' ) && is_author() ) ) {
+                self::record_security_event(
+                    'author_enum_blocked',
+                    'تلاش مهاجم برای استخراج نام‌های کاربری وردپرس (Author Enumeration) با ریدایرکت امن مهار شد.',
+                    [
+                        'ip'  => self::get_client_ip(),
+                        'uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( $_SERVER['REQUEST_URI'] ) : '',
+                    ]
+                );
+                wp_safe_redirect( home_url(), 301 );
+                exit;
+            }
+        }
+
+        public function filter_rest_user_enumeration( $endpoints ) {
+            if ( ! is_user_logged_in() ) {
+                if ( isset( $endpoints['/wp/v2/users'] ) ) {
+                    unset( $endpoints['/wp/v2/users'] );
+                }
+                if ( isset( $endpoints['/wp/v2/users/(?P<id>[\d]+)'] ) ) {
+                    unset( $endpoints['/wp/v2/users/(?P<id>[\d]+)'] );
+                }
+            }
+            return $endpoints;
+        }
+
+        public function harden_xmlrpc_methods( $methods ) {
+            unset( $methods['pingback.ping'] );
+            unset( $methods['pingback.extensions.getPingbacks'] );
+            return $methods;
         }
 
         public function scheduled_watchdog_run() {

@@ -59,14 +59,14 @@ if ( ! class_exists( 'HO_Anti_File_Integrity_Engine' ) ) {
             $url    = "https://api.wordpress.org/core/checksums/1.0/?version={$version}&locale={$locale}";
 
             $response = wp_remote_get( $url, [
-                'timeout'    => 15,
+                'timeout'    => 8,
                 'user-agent' => 'Gravity-Security-File-Integrity/' . HO_ANTI_VERSION,
             ] );
 
             if ( is_wp_error( $response ) ) {
                 // تلاش مجدد با زبان انگلیسی پیش‌فرض
                 $fallback_url = "https://api.wordpress.org/core/checksums/1.0/?version={$version}&locale=en_US";
-                $response = wp_remote_get( $fallback_url, [ 'timeout' => 15 ] );
+                $response = wp_remote_get( $fallback_url, [ 'timeout' => 8 ] );
                 if ( is_wp_error( $response ) ) {
                     return false;
                 }

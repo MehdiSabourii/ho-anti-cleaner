@@ -130,19 +130,35 @@ if ( ! class_exists( 'HO_Anti_Batch_Scanner' ) ) {
 
                 $state['current_step'] = 2;
                 $state['findings']     = $findings;
-                $hour_seconds = defined( 'HOUR_IN_SECONDS' ) ? HOUR_IN_SECONDS : 3600;
-            set_transient( 'ho_anti_scan_state_' . $scan_id, $state, $hour_seconds );
 
-                $progress = round( ( 2 / $total_steps ) * 100, 1 );
+                $is_last = ( 2 >= $total_steps );
+                if ( $is_last ) {
+                    $state['status']       = 'completed';
+                    $state['completed_at'] = current_time( 'mysql' );
+                    update_option( 'ho_anti_last_scan_report', [
+                        'scan_id'       => $scan_id,
+                        'completed_at'  => $state['completed_at'],
+                        'total_files'   => $state['total_files'],
+                        'findings'      => $findings,
+                        'stats'         => self::compute_scan_statistics( $findings ),
+                    ], false );
+                }
+
+                $hour_seconds = defined( 'HOUR_IN_SECONDS' ) ? HOUR_IN_SECONDS : 3600;
+                set_transient( 'ho_anti_scan_state_' . $scan_id, $state, $hour_seconds );
+
+                $progress = $is_last ? 100 : round( ( 2 / $total_steps ) * 100, 1 );
                 return [
-                    'success'       => true,
-                    'completed'     => false,
-                    'scan_id'       => $scan_id,
-                    'current_step'  => 2,
-                    'total_steps'   => $total_steps,
-                    'progress'      => $progress,
-                    'scanned_files' => 0,
-                    'findings_count'=> count( $findings ),
+                    'success'        => true,
+                    'completed'      => $is_last,
+                    'scan_id'        => $scan_id,
+                    'current_step'   => 2,
+                    'total_steps'    => $total_steps,
+                    'progress'       => $progress,
+                    'scanned_files'  => 0,
+                    'findings_count' => count( $findings ),
+                    'report'         => $is_last ? get_option( 'ho_anti_last_scan_report' ) : null,
+                    'ui_data'        => $is_last ? self::format_findings_for_ui( $findings, $state['total_files'] ) : null,
                 ];
             }
 
@@ -180,20 +196,21 @@ if ( ! class_exists( 'HO_Anti_Batch_Scanner' ) ) {
                 }
 
                 $hour_seconds = defined( 'HOUR_IN_SECONDS' ) ? HOUR_IN_SECONDS : 3600;
-            set_transient( 'ho_anti_scan_state_' . $scan_id, $state, $hour_seconds );
+                set_transient( 'ho_anti_scan_state_' . $scan_id, $state, $hour_seconds );
 
                 $progress = min( 100, round( ( $state['current_step'] / $total_steps ) * 100, 1 ) );
 
                 return [
-                    'success'       => true,
-                    'completed'     => $is_last,
-                    'scan_id'       => $scan_id,
-                    'current_step'  => $state['current_step'],
-                    'total_steps'   => $total_steps,
-                    'progress'      => $progress,
-                    'scanned_files' => $state['scanned_files'],
-                    'findings_count'=> count( $findings ),
-                    'report'        => $is_last ? get_option( 'ho_anti_last_scan_report' ) : null,
+                    'success'        => true,
+                    'completed'      => $is_last,
+                    'scan_id'        => $scan_id,
+                    'current_step'   => $state['current_step'],
+                    'total_steps'    => $total_steps,
+                    'progress'       => $progress,
+                    'scanned_files'  => $state['scanned_files'],
+                    'findings_count' => count( $findings ),
+                    'report'         => $is_last ? get_option( 'ho_anti_last_scan_report' ) : null,
+                    'ui_data'        => $is_last ? self::format_findings_for_ui( $findings, $state['total_files'] ) : null,
                 ];
             }
 
@@ -201,7 +218,158 @@ if ( ! class_exists( 'HO_Anti_Batch_Scanner' ) ) {
                 'success'   => true,
                 'completed' => true,
                 'message'   => 'اسکن از قبل پایان یافته است.',
+                'ui_data'   => self::format_findings_for_ui( $findings, isset( $state['total_files'] ) ? $state['total_files'] : 0 ),
             ];
+        }
+
+        /**
+         * قالب‌بندی یافته‌ها جهت نمایش مستقیم در داشبورد مدیریت و بخش‌های UI
+         *
+         * @param array $findings فهرست یافته‌های موتورهای امنیتی
+         * @param int   $total_files مجموع فایل‌های بررسی‌شده
+         * @return array ساختار داده سازگار با UI افزونه
+         */
+        public static function format_findings_for_ui( array $findings, $total_files = 0 ) {
+            $ui = [
+                'timestamp'            => current_time( 'mysql' ),
+                'options'              => [],
+                'tables'               => [],
+                'hidden_users'         => [],
+                'mu_plugins'           => [],
+                'infected_files'       => [],
+                'uploads_php'          => [],
+                'core_integrity'       => [],
+                'tampered_siteurl'     => [],
+                'insecure_permissions' => [],
+                'stats'                => [
+                    'total_files_scanned' => $total_files,
+                    'threats_count'       => count( $findings ),
+                ],
+            ];
+
+            $abs = function_exists( 'wp_normalize_path' ) ? wp_normalize_path( ABSPATH ) : str_replace( '\\', '/', ABSPATH );
+
+            foreach ( $findings as $f ) {
+                $rule_id   = isset( $f['rule_id'] ) ? $f['rule_id'] : '';
+                $type      = isset( $f['target_type'] ) ? $f['target_type'] : 'file';
+                $path      = isset( $f['target_path'] ) ? $f['target_path'] : '';
+                $norm_path = function_exists( 'wp_normalize_path' ) ? wp_normalize_path( $path ) : str_replace( '\\', '/', $path );
+                $rel       = str_replace( [ $abs, '\\' ], [ '', '/' ], $norm_path );
+                $ev        = isset( $f['evidence'] ) && is_array( $f['evidence'] ) ? $f['evidence'] : [];
+                $sev       = isset( $f['severity'] ) ? $f['severity'] : 'high';
+
+                // ۱. کاربران مشکوک یا درپشتی
+                if ( 'user' === $type || 'SUSPICIOUS_DB_USER' === $rule_id ) {
+                    $ui['hidden_users'][] = [
+                        'ID'         => isset( $ev['user_id'] ) ? $ev['user_id'] : 0,
+                        'user_login' => isset( $ev['user_login'] ) ? $ev['user_login'] : $path,
+                        'user_email' => isset( $ev['user_email'] ) ? $ev['user_email'] : '',
+                        'registered' => isset( $ev['user_registered'] ) ? $ev['user_registered'] : '',
+                        'is_admin'   => ! empty( $ev['is_admin'] ),
+                        'severity'   => $sev,
+                    ];
+                    continue;
+                }
+
+                // ۲. دستکاری آدرس اصلی سایت (Site URL)
+                if ( 'DB_SITEURL_TAMPERED' === $rule_id ) {
+                    $ui['tampered_siteurl'][] = [
+                        'option'        => isset( $ev['option_name'] ) ? $ev['option_name'] : $path,
+                        'current_value' => isset( $ev['current_value'] ) ? $ev['current_value'] : '',
+                        'trusted_value' => isset( $ev['trusted_value'] ) ? $ev['trusted_value'] : '',
+                        'severity'      => $sev,
+                    ];
+                    continue;
+                }
+
+                // ۳. آپشن‌های مشکوک دیتابیس
+                if ( 'option' === $type || 'MALICIOUS_DB_OPTION' === $rule_id ) {
+                    $ui['options'][] = [
+                        'option_name' => isset( $ev['option_name'] ) ? $ev['option_name'] : $path,
+                        'value'       => isset( $ev['preview'] ) ? $ev['preview'] : ( isset( $ev['detail'] ) ? $ev['detail'] : '' ),
+                        'severity'    => $sev,
+                    ];
+                    continue;
+                }
+
+                // ۴. جداول مشکوک دیتابیس
+                if ( 'table' === $type || 'MALICIOUS_DB_TABLE' === $rule_id ) {
+                    $ui['tables'][] = [
+                        'table_name' => isset( $ev['table_name'] ) ? $ev['table_name'] : $path,
+                        'row_count'  => isset( $ev['row_count'] ) ? $ev['row_count'] : 0,
+                        'severity'   => $sev,
+                    ];
+                    continue;
+                }
+
+                // ۵. فایل‌های هسته (دستکاری‌شده یا غیررسمی)
+                if ( in_array( $rule_id, [ 'CORE_FILE_MODIFIED', 'CORE_UNOFFICIAL_FILE', 'CORE_DIR_UNREFERENCED_PHP', 'CORE_ROOT_UNREFERENCED_PHP' ], true ) ) {
+                    $is_unofficial = ( 'CORE_FILE_MODIFIED' !== $rule_id );
+                    $ui['core_integrity'][] = [
+                        'finding_id'  => isset( $f['id'] ) ? $f['id'] : '',
+                        'type'        => $is_unofficial ? 'unofficial' : 'modified',
+                        'path'        => $norm_path,
+                        'relative'    => $rel,
+                        'description' => isset( $ev['detail'] ) ? $ev['detail'] : ( $is_unofficial ? 'فایل غیررسمی در هسته وردپرس' : 'فایل رسمی هسته تغییر یافته است' ),
+                        'severity'    => $sev,
+                        'action'      => $is_unofficial ? 'delete_unofficial' : 'restore_official',
+                    ];
+                    continue;
+                }
+
+                // ۶. سطوح دسترسی ناامن (Permissions)
+                if ( 'INSECURE_PERMISSIONS' === $rule_id ) {
+                    $ui['insecure_permissions'][] = [
+                        'path'          => $norm_path,
+                        'relative'      => $rel,
+                        'current_perms' => isset( $ev['current_perms'] ) ? $ev['current_perms'] : '',
+                        'severity'      => $sev,
+                    ];
+                    continue;
+                }
+
+                // ۷. فایل‌های پوشه mu-plugins
+                if ( false !== strpos( $norm_path, 'mu-plugins' ) ) {
+                    $ui['mu_plugins'][] = [
+                        'filename' => basename( $norm_path ),
+                        'path'     => $norm_path,
+                        'relative' => $rel,
+                        'reason'   => isset( $ev['detail'] ) ? $ev['detail'] : ( isset( $ev['match'] ) ? $ev['match'] : 'فایل مشکوک یا درپشتی در mu-plugins' ),
+                        'severity' => $sev,
+                    ];
+                    continue;
+                }
+
+                // ۸. اسکریپت‌های PHP در پوشه uploads
+                if ( false !== strpos( $norm_path, 'uploads' ) && 'php' === strtolower( pathinfo( $norm_path, PATHINFO_EXTENSION ) ) ) {
+                    $ui['uploads_php'][] = [
+                        'filename' => basename( $norm_path ),
+                        'path'     => $norm_path,
+                        'relative' => $rel,
+                        'severity' => $sev,
+                    ];
+                    continue;
+                }
+
+                // ۹. سایر فایل‌های آلوده یا مشکوک
+                $patterns = [];
+                if ( isset( $ev['rule_title'] ) ) $patterns[] = $ev['rule_title'];
+                if ( isset( $ev['match'] ) )      $patterns[] = $ev['match'];
+                if ( isset( $ev['detail'] ) )     $patterns[] = $ev['detail'];
+                if ( empty( $patterns ) )         $patterns[] = $rule_id;
+
+                $ui['infected_files'][] = [
+                    'finding_id'      => isset( $f['id'] ) ? $f['id'] : '',
+                    'filename'        => basename( $norm_path ),
+                    'path'            => $norm_path,
+                    'relative'        => $rel,
+                    'patterns'        => array_unique( $patterns ),
+                    'severity'        => $sev,
+                    'safe_repairable' => ( 'targeted_repair' === ( isset( $f['recommended_action'] ) ? $f['recommended_action'] : '' ) ),
+                ];
+            }
+
+            return $ui;
         }
 
         /**

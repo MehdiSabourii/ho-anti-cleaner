@@ -8,7 +8,7 @@
 [![PHP](https://img.shields.io/badge/PHP-7.4%20--%208.3-purple.svg)](https://php.net)
 [![License](https://img.shields.io/badge/License-GPL--2.0%2B-green.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
 [![Author](https://img.shields.io/badge/Developer-ho%20mehdi%20sabour-orange.svg)](#تیم-توسعه-دهنده)
-[![Version](https://img.shields.io/badge/Version-3.1.0-brightgreen.svg)](#)
+[![Version](https://img.shields.io/badge/Version-3.2.0-brightgreen.svg)](#)
 [![Tests](https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen.svg)](#)
 
 ---

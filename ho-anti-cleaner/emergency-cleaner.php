@@ -1,6 +1,6 @@
 <?php
 /**
- * Emergency Standalone HO Anti Cleaner & Security Shield v3.1.0
+ * Emergency Standalone HO Anti Cleaner & Security Shield v3.2.0
  * فایل اضطراری تک‌مرحله‌ای برای پاک‌سازی کامل سایت، جراحی گیت‌کیپرهای لاگین و قفل محافظتی فایل‌ها
  * نحوه استفاده: این فایل را در ریشه وردپرس (کنار wp-config.php) آپلود کرده و در مرورگر باز کنید.
  */

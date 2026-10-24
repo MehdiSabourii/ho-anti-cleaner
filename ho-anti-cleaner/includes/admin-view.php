@@ -11,6 +11,7 @@ $security_checks  = class_exists( 'HO_Anti_Optimizer' ) ? HO_Anti_Optimizer::aud
 $lock_status      = class_exists( 'HO_Anti_Protection' ) ? HO_Anti_Protection::get_lock_status() : [];
 $self_healing     = (bool) get_option( 'ho_anti_self_healing_enabled', 1 );
 $firewall_on      = (bool) get_option( 'ho_anti_firewall_enabled', 1 );
+$login_shield_on  = (bool) get_option( 'ho_anti_login_protection_enabled', 1 );
 $is_locked        = (bool) get_option( 'ho_anti_files_locked', 1 );
 $security_logs    = class_exists( 'HO_Anti_Protection' ) ? HO_Anti_Protection::get_security_logs() : [];
 $cron_report      = class_exists( 'HO_Anti_Protection' ) ? HO_Anti_Protection::audit_cron_jobs() : [ 'total' => 0, 'suspicious' => [] ];
@@ -232,6 +233,22 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
                         </div>
                         <label class="afc-switch" style="margin-right:15px;">
                             <input type="checkbox" id="afc-toggle-waf" <?php checked( $firewall_on ); ?>>
+                            <span class="afc-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- سپر محافظت از ورود و ثبت‌نام (Login & Anti-BruteForce Shield) -->
+                <div class="afc-box">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                        <div>
+                            <h3 style="margin:0 0 6px 0;"><span class="dashicons dashicons-admin-users"></span> سپر محافظت از صفحه ورود و ثبت‌نام (Anti-BruteForce Shield)</h3>
+                            <p style="margin:0; font-size:13px; color:#475569; line-height:1.6;">
+                                جلوگیری از حملات Brute-Force به <code>wp-login.php</code> (مسدودسازی خودکار IP پس از ۵ تلاش ناموفق)، به کارگیری فیلد تله نامرئی (Honeypot) در فرم‌های ورود و ثبت‌نام، و مسدودسازی اسکن نام‌های کاربری (Author Enumeration).
+                            </p>
+                        </div>
+                        <label class="afc-switch" style="margin-right:15px;">
+                            <input type="checkbox" id="afc-toggle-login-shield" <?php checked( $login_shield_on ); ?>>
                             <span class="afc-slider"></span>
                         </label>
                     </div>

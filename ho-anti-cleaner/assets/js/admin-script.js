@@ -37,45 +37,127 @@ jQuery(document).ready(function ($) {
 
     function startFullScan() {
         var $btn = $('#afc-btn-quick-scan');
+        var $btnStart = $('.afc-btn-start-scan');
         var $progressBox = $('#afc-progress-box');
         var $progressBar = $('#afc-progress-bar');
         var $progressMsg = $('#afc-progress-msg');
 
         $btn.prop('disabled', true);
+        $btnStart.prop('disabled', true);
         $progressBox.slideDown();
-        $progressBar.css('width', '25%');
-        $progressMsg.text(afcData.strings.scanning);
+        $progressBar.css('width', '5%');
+        $progressMsg.text('در حال آماده‌سازی و ساخت فهرست اهداف اسکن...');
         logMessage('شروع اسکن عمیق سیستم و دیتابیس...', 'system');
 
+        // مرحله ۱: آغاز نشست اسکن پله‌ای و دسته‌ای (جلوگیری از تایم‌اوت FastCGI/سرور)
         $.ajax({
             url: afcData.ajax_url,
             type: 'POST',
             dataType: 'json',
             data: {
-                action: 'afc_scan_system',
+                action: 'afc_batch_scan_start',
                 nonce: afcData.nonce
             },
-            success: function (response) {
-                $progressBar.css('width', '100%');
-                setTimeout(function () {
+            success: function (res) {
+                if (res.success && res.data && res.data.scan_id) {
+                    var scanId = res.data.scan_id;
+                    var totalFiles = res.data.total_files || 0;
+                    var totalSteps = res.data.total_steps || 1;
+                    logMessage('نشست اسکن آماده شد. مجموع اهداف: ' + totalFiles + ' فایل در ' + totalSteps + ' پله اجرایی.', 'system');
+                    runScanStep(scanId, totalSteps, totalFiles, 0);
+                } else {
                     $progressBox.slideUp();
                     $btn.prop('disabled', false);
-                }, 600);
-
-                if (response.success) {
-                    scanData = response.data;
-                    renderScanResults(scanData);
-                    logMessage('اسکن با موفقیت به پایان رسید. تعداد تهدیدات یافت‌شده: ' + scanData.stats.threats_count, scanData.stats.threats_count > 0 ? 'danger' : 'success');
-                } else {
-                    logMessage('خطا در انجام اسکن: ' + (response.data.message || 'نامشخص'), 'danger');
+                    $btnStart.prop('disabled', false);
+                    var msg = (res.data && res.data.message) ? res.data.message : 'پاسخ نامعتبر از سرور';
+                    logMessage('خطا در آغاز نشست اسکن: ' + msg, 'danger');
                 }
             },
             error: function (xhr, status, error) {
                 $progressBox.slideUp();
                 $btn.prop('disabled', false);
-                logMessage('خطای غیرمنتظره در ارتباط AJAX: ' + error, 'danger');
+                $btnStart.prop('disabled', false);
+                var errDetail = xhr.status ? (xhr.status + ' ' + (xhr.statusText || '')) : (error || 'خطای تایم‌اوت/شبکه');
+                logMessage('خطای غیرمنتظره در ارتباط AJAX: ' + errDetail, 'danger');
             }
         });
+
+        // اجرای گام‌به‌گام پله‌های اسکن
+        function runScanStep(scanId, totalSteps, totalFiles, retryCount) {
+            $.ajax({
+                url: afcData.ajax_url,
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'afc_batch_scan_step',
+                    scan_id: scanId,
+                    nonce: afcData.nonce
+                },
+                success: function (res) {
+                    if (res.success && res.data) {
+                        var stepData = res.data;
+                        var progress = stepData.progress || 0;
+                        var curStep = stepData.current_step || 0;
+                        var scanned = stepData.scanned_files || 0;
+
+                        $progressBar.css('width', Math.max(5, progress) + '%');
+
+                        if (curStep === 1) {
+                            $progressMsg.text('گام ۱: بررسی دیتابیس، آپشن‌ها، جداول و نقاط ماندگاری...');
+                            logMessage('بررسی نقاط ماندگاری و دیتابیس پایان یافت.', 'system');
+                        } else if (curStep === 2) {
+                            $progressMsg.text('گام ۲: اعتبارسنجی چکسام‌های رسمی هسته نسبت به WordPress.org...');
+                            logMessage('اعتبارسنجی فایل‌های هسته وردپرس پایان یافت.', 'system');
+                        } else {
+                            $progressMsg.text('در حال اسکن فایل‌های PHP... (' + scanned + ' از ' + totalFiles + ' فایل - ' + progress + '%)');
+                        }
+
+                        if (!stepData.completed) {
+                            // اجرای پله بعدی
+                            runScanStep(scanId, totalSteps, totalFiles, 0);
+                        } else {
+                            // پایان اسکن
+                            $progressBar.css('width', '100%');
+                            setTimeout(function () {
+                                $progressBox.slideUp();
+                                $btn.prop('disabled', false);
+                                $btnStart.prop('disabled', false);
+                            }, 600);
+
+                            var uiData = stepData.ui_data;
+                            if (uiData) {
+                                scanData = uiData;
+                                renderScanResults(uiData);
+                                var threats = (uiData.stats && uiData.stats.threats_count) ? uiData.stats.threats_count : (stepData.findings_count || 0);
+                                logMessage('اسکن عمیق سیستم با موفقیت به پایان رسید. مجموع اهداف: ' + (uiData.stats.total_files_scanned || totalFiles) + ' فایل. تعداد تهدیدات یافت‌شده: ' + threats, threats > 0 ? 'danger' : 'success');
+                            } else {
+                                logMessage('اسکن به پایان رسید اما داده‌های گزارش در دسترس نیست.', 'warning');
+                            }
+                        }
+                    } else {
+                        var msg = (res.data && res.data.message) ? res.data.message : 'پاسخ پله نامعتبر';
+                        $progressBox.slideUp();
+                        $btn.prop('disabled', false);
+                        $btnStart.prop('disabled', false);
+                        logMessage('خطا در پردازش پله اسکن: ' + msg, 'danger');
+                    }
+                },
+                error: function (xhr, status, error) {
+                    if (retryCount < 2) {
+                        logMessage('ارتباط با سرور در پله جاری با وقفه مواجه شد. در حال تلاش مجدد... (تلاش ' + (retryCount + 1) + '/2)', 'warning');
+                        setTimeout(function () {
+                            runScanStep(scanId, totalSteps, totalFiles, retryCount + 1);
+                        }, 2000);
+                    } else {
+                        $progressBox.slideUp();
+                        $btn.prop('disabled', false);
+                        $btnStart.prop('disabled', false);
+                        var errDetail = xhr.status ? (xhr.status + ' ' + (xhr.statusText || '')) : (error || 'خطای تایم‌اوت/شبکه');
+                        logMessage('خطای غیرمنتظره در ارتباط AJAX: ' + errDetail, 'danger');
+                    }
+                }
+            });
+        }
     }
 
     // رندر نتایج اسکن در UI
@@ -731,6 +813,20 @@ jQuery(document).ready(function ($) {
         var enable = $(this).is(':checked') ? 1 : 0;
         $.post(afcData.ajax_url, {
             action: 'afc_toggle_firewall',
+            enable: enable,
+            nonce: afcData.nonce
+        }, function (res) {
+            if (res.success) {
+                logMessage(res.data.message, enable ? 'success' : 'warning');
+            }
+        });
+    });
+
+    // سوئیچ محافظت از صفحه ورود و ثبت‌نام
+    $('#afc-toggle-login-shield').on('change', function () {
+        var enable = $(this).is(':checked') ? 1 : 0;
+        $.post(afcData.ajax_url, {
+            action: 'afc_toggle_login_protection',
             enable: enable,
             nonce: afcData.nonce
         }, function (res) {

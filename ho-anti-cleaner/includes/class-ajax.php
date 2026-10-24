@@ -27,6 +27,7 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             add_action( 'wp_ajax_afc_get_lock_status',           [ $this, 'ajax_get_lock_status' ] );
             add_action( 'wp_ajax_afc_toggle_self_healing',       [ $this, 'ajax_toggle_self_healing' ] );
             add_action( 'wp_ajax_afc_toggle_firewall',           [ $this, 'ajax_toggle_firewall' ] );
+            add_action( 'wp_ajax_afc_toggle_login_protection',   [ $this, 'ajax_toggle_login_protection' ] );
             add_action( 'wp_ajax_afc_install_execution_shields', [ $this, 'ajax_install_execution_shields' ] );
             add_action( 'wp_ajax_afc_audit_cron_jobs',           [ $this, 'ajax_audit_cron_jobs' ] );
             add_action( 'wp_ajax_afc_clean_cron_jobs',           [ $this, 'ajax_clean_cron_jobs' ] );
@@ -265,6 +266,16 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             wp_send_json_success( [
                 'enabled' => (bool) $enable,
                 'message' => $enable ? 'فایروال پیشگیرانه فعال شد.' : 'فایروال پیشگیرانه غیرفعال شد.',
+            ] );
+        }
+
+        public function ajax_toggle_login_protection() {
+            $this->verify_permissions();
+            $enable = ! empty( $_POST['enable'] ) ? 1 : 0;
+            update_option( 'ho_anti_login_protection_enabled', $enable );
+            wp_send_json_success( [
+                'enabled' => (bool) $enable,
+                'message' => $enable ? 'سپر محافظت از ورود و ثبت‌نام فعال شد.' : 'سپر محافظت از ورود و ثبت‌نام غیرفعال شد.',
             ] );
         }
 

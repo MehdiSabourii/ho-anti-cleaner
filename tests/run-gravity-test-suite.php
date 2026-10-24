@@ -105,6 +105,40 @@ if ( ! function_exists( 'add_action' ) ) { function add_action( $tag, $callback,
 if ( ! function_exists( 'add_filter' ) ) { function add_filter( $tag, $callback, $priority = 10, $accepted_args = 1 ) { return true; } }
 if ( ! function_exists( 'esc_url_raw' ) ) { function esc_url_raw( $url ) { return $url; } }
 if ( ! function_exists( 'sanitize_text_field' ) ) { function sanitize_text_field( $str ) { return trim( strip_tags( $str ) ); } }
+if ( ! function_exists( 'delete_transient' ) ) {
+    function delete_transient( $name ) {
+        unset( $GLOBALS['mock_transients'][ $name ] );
+        return true;
+    }
+}
+if ( ! function_exists( 'is_user_logged_in' ) ) {
+    function is_user_logged_in() {
+        return false;
+    }
+}
+
+if ( ! class_exists( 'WP_Error' ) ) {
+    class WP_Error {
+        public $errors = [];
+        public function __construct( $code = '', $message = '', $data = '' ) {
+            if ( ! empty( $code ) ) {
+                $this->errors[ $code ][] = $message;
+            }
+        }
+        public function get_error_code() {
+            $keys = array_keys( $this->errors );
+            return empty( $keys ) ? '' : $keys[0];
+        }
+        public function add( $code, $message, $data = '' ) {
+            $this->errors[ $code ][] = $message;
+        }
+    }
+}
+if ( ! function_exists( 'is_wp_error' ) ) {
+    function is_wp_error( $thing ) {
+        return ( $thing instanceof WP_Error );
+    }
+}
 
 // بارگذاری کلاس‌های افزونه
 require_once HO_ANTI_PLUGIN_DIR . 'includes/models/class-finding.php';
@@ -389,6 +423,48 @@ foreach ( $sec_logs as $lg ) {
 assert_test(
     'سیستم لاگ ساختاریافته: ثبت موفق و قابل بازیابی تاریخچه رویدادهای امنیتی با متادیتا',
     $found_log
+);
+
+// --- ۶. آزمون‌های سپر محافظت از ورود و ثبت‌نام (Login & Anti-BruteForce Shield) ---
+echo "\n--- 6. آزمون‌های سپر ورود و ضد Brute-Force (Login Shield Tests) ---\n";
+
+// ۶.۱: تست به دام افتادن بات اسپمر با فیلد تله عسل (Honeypot Trap)
+$_POST['ho_anti_hp_shield'] = 'malicious_bot_value';
+$auth_res = $protection->guard_authenticate( null, 'admin', 'some_password' );
+unset( $_POST['ho_anti_hp_shield'] );
+assert_test(
+    'تله Honeypot: مهار بلادرنگ ربات‌های ورود با کد خطای ho_anti_bot_detected',
+    is_wp_error( $auth_res ) && 'ho_anti_bot_detected' === $auth_res->get_error_code()
+);
+
+// ۶.۲: تست مهار حملات Brute-Force و قفل موقت آدرس IP پس از ۵ تلاش ناموفق
+for ( $i = 0; $i < 5; $i++ ) {
+    $protection->handle_failed_login( 'admin_target' );
+}
+$locked_res = $protection->guard_authenticate( null, 'admin_target', 'wrong_pass' );
+assert_test(
+    'ضد Brute-Force: قفل‌گذاری و مهار خودکار درخواست ورود پس از ۵ تلاش ناموفق',
+    is_wp_error( $locked_res ) && 'ho_anti_ip_locked' === $locked_res->get_error_code()
+);
+
+// ۶.۳: تست رفع خودکار قفل و ریست شدن شمارنده پس از ورود موفق
+$protection->handle_successful_login( 'admin_target' );
+$cleared_res = $protection->guard_authenticate( null, 'admin_target', 'correct_pass' );
+assert_test(
+    'ورود موفق: پاک‌سازی فوری قفل و آزادسازی IP پس از احراز هویت صحیح',
+    ! is_wp_error( $cleared_res )
+);
+
+// ۶.۴: تست مهار استخراج کاربران از طریق REST API (Anti-User Enumeration)
+$test_endpoints = [
+    '/wp/v2/users'               => [ 'methods' => 'GET' ],
+    '/wp/v2/users/(?P<id>[\d]+)' => [ 'methods' => 'GET' ],
+    '/wp/v2/posts'               => [ 'methods' => 'GET' ],
+];
+$safe_endpoints = $protection->filter_rest_user_enumeration( $test_endpoints );
+assert_test(
+    'ضد نشت نام کاربری: حذف اندپوینت‌های /wp/v2/users برای کاربران غیرمجاز',
+    ! isset( $safe_endpoints['/wp/v2/users'] ) && isset( $safe_endpoints['/wp/v2/posts'] )
 );
 
 
