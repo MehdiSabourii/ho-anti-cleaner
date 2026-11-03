@@ -1,6 +1,6 @@
 <?php
 /**
- * Emergency Standalone HO Anti Cleaner & Security Shield v3.2.0
+ * Emergency Standalone HO Anti Cleaner & Security Shield v3.4.0
  * فایل اضطراری تک‌مرحله‌ای برای پاک‌سازی کامل سایت، جراحی گیت‌کیپرهای لاگین و قفل محافظتی فایل‌ها
  * نحوه استفاده: این فایل را در ریشه وردپرس (کنار wp-config.php) آپلود کرده و در مرورگر باز کنید.
  */
@@ -243,8 +243,93 @@ if ( isset( $_POST['run_emergency_clean'] ) || isset( $_GET['run'] ) ) {
     @chmod( $ht_upload, 0444 );
     $actions_log[] = [ 'type' => 'success', 'msg' => 'سپر محافظتی htaccess در پوشه uploads مستقر شد.' ];
 
+    // ۷.۱. جراحی و پاک‌سازی .user.ini و .htaccess (خنثی‌سازی دستورات auto_prepend_file و حذف بدافزارهای متصل)
+    $server_configs = [ ABSPATH . '.user.ini', ABSPATH . '.htaccess' ];
+    foreach ( $server_configs as $sc_file ) {
+        if ( ! file_exists( $sc_file ) ) continue;
+        $sc_content = @file_get_contents( $sc_file );
+        if ( empty( $sc_content ) ) continue;
+        $sc_modified = false;
+
+        // بررسی auto_prepend_file و auto_append_file
+        if ( preg_match_all( '/(?:auto_prepend_file|auto_append_file)\s*=\s*[\'"]?([^\'"\r\n;]+)[\'"]?/i', $sc_content, $m_ini, PREG_SET_ORDER ) ||
+             preg_match_all( '/php_value\s+(?:auto_prepend_file|auto_append_file)\s+[\'"]?([^\'"\r\n]+)[\'"]?/i', $sc_content, $m_ini, PREG_SET_ORDER ) ) {
+            foreach ( $m_ini as $mi ) {
+                $raw_line   = $mi[0];
+                $target_php = trim( $mi[1] );
+
+                // در صورتی که فایل قانونی وردفنس باشد حفظ می‌شود
+                if ( 'wordfence-waf.php' === basename( $target_php ) && file_exists( $target_php ) ) {
+                    continue;
+                }
+
+                // حذف فایل بدافزار ریشه‌ای متصل
+                $resolved_php = $target_php;
+                if ( ! file_exists( $resolved_php ) && file_exists( ABSPATH . ltrim( $target_php, '/\\' ) ) ) {
+                    $resolved_php = ABSPATH . ltrim( $target_php, '/\\' );
+                }
+                if ( file_exists( $resolved_php ) && is_file( $resolved_php ) ) {
+                    @unlink( $resolved_php );
+                    $actions_log[] = [ 'type' => 'success', 'msg' => 'فایل بدافزار ریشه‌ای متصل به prepend حذف شد: ' . basename( $resolved_php ) ];
+                }
+
+                $sc_content = str_replace( $raw_line, '', $sc_content );
+                $sc_modified = true;
+            }
+        }
+
+        if ( $sc_modified ) {
+            @chmod( $sc_file, 0644 );
+            @file_put_contents( $sc_file, trim( $sc_content ) . "\n" );
+            @chmod( $sc_file, 0444 );
+            $actions_log[] = [ 'type' => 'success', 'msg' => 'دستورات مخرب auto_prepend_file از ' . basename( $sc_file ) . ' پاک‌سازی شدند.' ];
+        }
+    }
+
+    // ۷.۲. اخراج اضطراری تمام نشست‌های هکر و کاربران (حذف session_tokens)
+    $del_sessions = $wpdb->query( "DELETE FROM {$wpdb->usermeta} WHERE meta_key = 'session_tokens'" );
+    $actions_log[] = [ 'type' => 'success', 'msg' => "تعداد $del_sessions توکن نشست فعال از پایگاه داده حذف شد (مهاجم از حساب ادمین به بیرون پرتاب گردید)." ];
+
+    // ۷.۳. بازتولید کلیدهای امنیتی (Salts) در wp-config.php
+    $config_file = ABSPATH . 'wp-config.php';
+    if ( ! file_exists( $config_file ) && file_exists( dirname( ABSPATH ) . '/wp-config.php' ) ) {
+        $config_file = dirname( ABSPATH ) . '/wp-config.php';
+    }
+    if ( file_exists( $config_file ) && is_readable( $config_file ) ) {
+        $cfg_data = @file_get_contents( $config_file );
+        if ( ! empty( $cfg_data ) ) {
+            $salt_keys = [ 'AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT' ];
+            foreach ( $salt_keys as $sk ) {
+                $new_salt = wp_generate_password( 64, true, true );
+                $cfg_data = preg_replace( "/define\s*\(\s*['\"]" . preg_quote( $sk, '/' ) . "['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);/i", "define( '{$sk}', " . var_export( $new_salt, true ) . " );", $cfg_data, 1 );
+            }
+            // غیرفعال‌سازی نمایش خطاهای PHP به عموم
+            if ( preg_match( "/define\s*\(\s*['\"]WP_DEBUG_DISPLAY['\"]\s*,\s*(?:true|1)\s*\);/i", $cfg_data ) ) {
+                $cfg_data = preg_replace( "/define\s*\(\s*['\"]WP_DEBUG_DISPLAY['\"]\s*,\s*(?:true|1)\s*\);/i", "define( 'WP_DEBUG_DISPLAY', false );", $cfg_data );
+            } elseif ( false === strpos( $cfg_data, 'WP_DEBUG_DISPLAY' ) ) {
+                $cfg_data = preg_replace( '/<\?php\s*/', "<?php\ndefine( 'WP_DEBUG_DISPLAY', false );\n@ini_set( 'display_errors', '0' );\n", $cfg_data, 1 );
+            }
+            @chmod( $config_file, 0644 );
+            if ( false !== @file_put_contents( $config_file, $cfg_data ) ) {
+                @chmod( $config_file, 0444 );
+                $actions_log[] = [ 'type' => 'success', 'msg' => '۸ کلید امنیتی (Salts) در wp-config.php بازتولید و نمایش خطاهای عمومی PHP (WP_DEBUG_DISPLAY) غیرفعال شد.' ];
+            }
+        }
+    }
+
+    // ۷.۴. استانداردسازی سطح دسترسی پوشه wp-content و زیرپوشه‌ها به 0755
+    $c_dir = WP_CONTENT_DIR;
+    if ( is_dir( $c_dir ) ) {
+        @chmod( $c_dir, 0755 );
+        $sub_dirs = [ $c_dir . '/plugins', $c_dir . '/themes', $c_dir . '/uploads' ];
+        foreach ( $sub_dirs as $sd ) {
+            if ( is_dir( $sd ) ) @chmod( $sd, 0755 );
+        }
+        $actions_log[] = [ 'type' => 'success', 'msg' => 'سطح دسترسی پوشه wp-content و زیرپوشه‌ها به 0755 استانداردسازی شد (مجوز ناامن 0777 خنثی شد).' ];
+    }
+
     // ۸. قفل کردن فایل‌های حیاتی به 0444 (ضد بازنویسی)
-    $crit_files = [ ABSPATH . 'wp-login.php', ABSPATH . 'index.php', ABSPATH . 'wp-settings.php', ABSPATH . 'wp-load.php' ];
+    $crit_files = [ ABSPATH . 'wp-login.php', ABSPATH . 'index.php', ABSPATH . 'wp-settings.php', ABSPATH . 'wp-load.php', ABSPATH . '.user.ini', ABSPATH . '.htaccess' ];
     foreach ( $crit_files as $cf ) {
         if ( file_exists( $cf ) ) {
             @chmod( $cf, 0444 );
@@ -277,7 +362,7 @@ if ( isset( $_POST['self_delete'] ) ) {
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>ابزار اضطراری HO Anti v3.0.0</title>
+    <title>ابزار اضطراری HO Anti v3.4.0</title>
     <style>
         body { font-family: -apple-system, Tahoma, Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 40px 20px; color: #1e293b; }
         .container { max-width: 860px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 32px; }
@@ -296,7 +381,7 @@ if ( isset( $_POST['self_delete'] ) ) {
 </head>
 <body>
 <div class="container">
-    <h1>🛡️ پاک‌ساز اضطراری و سپر ضد تزریق HO Anti v3.0.0</h1>
+    <h1>🛡️ پاک‌ساز اضطراری و سپر ضد تزریق HO Anti v3.4.0</h1>
     <p>این ابزار به صورت مستقیم فایل‌های ریشه (به ویژه <code>wp-login.php</code>) را از گیت‌کیپرهای مسدودکننده پاک کرده، فایل‌های آلوده به بدافزار را جراحی و کلیه درپشتی‌های دیتابیس و mu-plugins را حذف نموده و فایل‌های حساس را با مجوز 0444 قفل می‌کند.</p>
 
     <?php if ( ! $is_executed ): ?>

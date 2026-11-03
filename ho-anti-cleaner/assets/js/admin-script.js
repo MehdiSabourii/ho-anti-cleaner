@@ -723,6 +723,46 @@ jQuery(document).ready(function ($) {
         });
     });
 
+    // اخراج اضطراری هکر و باطل‌سازی تمام نشست‌ها
+    $('#afc-btn-emergency-kick').on('click', function (e) {
+        e.preventDefault();
+        var confirmMsg = 'هشدار امنیتی بسیار مهم:\n\nاین عملیات تمامی نشست‌های ورود فعال در کل سایت (شامل حساب شما و مهاجم) را فوراً منهدم کرده و ۸ کلید امنیتی (Salts) در فایل wp-config.php را بازتولید می‌کند.\n\nپس از این اقدام، هکر بلافاصله از تمامی دستگاه‌ها به بیرون پرتاب می‌شود و خود شما نیز باید با رمز جدید مجدداً وارد شوید.\n\nآیا اطمینان کامل دارید؟';
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('در حال اخراج هکر و نوسازی سالت‌ها...');
+        logMessage('در حال اجرای Kill-Switch اضطراری: حذف تمامی session_tokens و بازنویسی Salts...', 'danger');
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_emergency_kick_sessions',
+                nonce: afcData.nonce
+            },
+            success: function (res) {
+                if (res.success) {
+                    logMessage('عملیات با موفقیت انجام شد: ' + res.data.message, 'success');
+                    alert(res.data.message + '\n\nاکنون برای ورود مجدد با رمز جدید به صفحه لاگین هدایت می‌شوید.');
+                    window.location.reload();
+                } else {
+                    $btn.prop('disabled', false).html('<span class="dashicons dashicons-warning"></span> اخراج فوری هکر و نوسازی سالت‌ها');
+                    alert(res.data.message || 'خطا در اجرای عملیات.');
+                    logMessage('خطا: ' + (res.data.message || 'نامشخص'), 'danger');
+                }
+            },
+            error: function () {
+                // با تغییر سالت‌ها ممکن است نشست فعلی بلافاصله ۴۰۳ شود که نشان‌دهنده موفقیت خروج است
+                logMessage('کلیدهای امنیتی تغییر یافتند و ارتباط تمام نشست‌ها قطع شد. در حال هدایت به صفحه ورود...', 'success');
+                alert('کلیدهای امنیتی با موفقیت تغییر یافتند و تمام نشست‌های نفوذگر منقضی شدند.\nلطفاً مجدداً با رمز عبور جدید وارد شوید.');
+                window.location.reload();
+            }
+        });
+    });
+
     $('#afc-copy-salts').on('click', function (e) {
         e.preventDefault();
         var copyText = document.getElementById('afc-salts-text');
@@ -733,6 +773,56 @@ jQuery(document).ready(function ($) {
         setTimeout(function () {
             $('#afc-copy-salts').text('کپی در کلیپ‌بورد');
         }, 2000);
+    });
+
+    // اصلاح خودکار بررسی‌های سلامت امنیتی (مانند WP_DEBUG_DISPLAY و سطح دسترسی wp-content)
+    $(document).on('click', '.afc-btn-fix-health', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        var checkKey = $btn.data('check');
+        var $row = $btn.closest('tr');
+        var $statusCol = $row.find('.afc-health-status-col');
+        var $detailCol = $row.find('.afc-health-detail-col');
+
+        if (!checkKey) return;
+
+        $btn.prop('disabled', true).text('در حال اصلاح...');
+        logMessage('در حال اصلاح خودکار مورد سلامت امنیتی: ' + checkKey, 'system');
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_fix_security_check',
+                check_key: checkKey,
+                nonce: afcData.nonce
+            },
+            success: function (res) {
+                if (res.success) {
+                    $row.css('background', '#dcfce7');
+                    $statusCol.html('<span class="afc-badge afc-badge-safe">ایمن</span>');
+                    $btn.replaceWith('<span class="afc-badge afc-badge-safe"><span class="dashicons dashicons-yes"></span> اصلاح شد</span>');
+                    if (checkKey === 'debug_display') {
+                        $detailCol.text('غیرفعال و امن است (WP_DEBUG_DISPLAY = false).');
+                    } else if (checkKey === 'wp_content_perms') {
+                        $detailCol.text('سطح دسترسی استاندارد شد: ' + (res.data.perms || '0755'));
+                    } else if (checkKey === 'wp_config_perms') {
+                        $detailCol.text('سطح دسترسی ایمن شد: ' + (res.data.perms || '0640'));
+                    }
+                    logMessage('اصلاح با موفقیت انجام شد: ' + res.data.message, 'success');
+                    alert(res.data.message);
+                } else {
+                    $btn.prop('disabled', false).html('<span class="dashicons dashicons-shield"></span> تلاش مجدد');
+                    logMessage('خطا در اصلاح: ' + res.data.message, 'danger');
+                    alert(res.data.message || 'خطا در اصلاح مورد امنیتی.');
+                }
+            },
+            error: function () {
+                $btn.prop('disabled', false).html('<span class="dashicons dashicons-shield"></span> تلاش مجدد');
+                alert(afcData.strings.error_occurred || 'خطایی در ارتباط با سرور رخ داد.');
+            }
+        });
     });
 
     // پاک‌سازی کنسول لاگ

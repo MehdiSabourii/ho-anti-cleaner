@@ -194,6 +194,27 @@ if ( ! class_exists( 'HO_Anti_Protection' ) ) {
                         }
                     }
                 }
+
+                // بررسی فوری تزریق‌های auto_prepend_file در فایل‌های پیکربندی سرور (.user.ini و .htaccess)
+                if ( in_array( $name, [ '.user.ini', '.htaccess' ], true ) ) {
+                    if ( preg_match( '/(?:auto_prepend_file|auto_append_file)\s*=/i', $content ) ) {
+                        // بررسی اینکه آیا صرفاً وردفنس قانونی است یا خیر
+                        $is_only_wordfence = ( 1 === preg_match_all( '/auto_prepend_file\s*=\s*[\'"]?([^\'"\r\n;]+)[\'"]?/i', $content, $wm ) ) &&
+                                             ( 'wordfence-waf.php' === basename( trim( $wm[1][0] ) ) );
+
+                        if ( ! $is_only_wordfence && class_exists( 'HO_Anti_Safe_Repair' ) ) {
+                            $rep_res = HO_Anti_Safe_Repair::repair_server_config_file( $path );
+                            if ( ! empty( $rep_res['success'] ) ) {
+                                $healed_any = true;
+                                self::record_security_event( 'self_healed_server_config', "خنثی‌سازی خودکار و بلادرنگ تزریق auto_prepend_file در فایل $name و قرنطینه بدافزار متصل به آن.", [
+                                    'file'         => $name,
+                                    'neutralized'  => isset( $rep_res['neutralized'] ) ? $rep_res['neutralized'] : [],
+                                    'time'         => current_time( 'mysql' ),
+                                ] );
+                            }
+                        }
+                    }
+                }
             }
 
             // اگر گزینه‌ی قفل فعال است، بررسی می‌کنیم که فایل‌ها از 0444 خارج نشده باشند
@@ -526,6 +547,95 @@ if ( ! class_exists( 'HO_Anti_Protection' ) ) {
             }
 
             return [ 'success' => false, 'message' => 'خطا در بازنویسی wp-config.php.' ];
+        }
+
+        /**
+         * اخراج فوری هکر و قطع تمام دسترسی‌ها (Emergency Kill-Switch):
+         * ۱. حذف کلیه توکن‌های نشست (session_tokens) از جدول usermeta برای تمام کاربران و ادمین‌ها
+         * ۲. بازتولید و نوشتن ۸ سالت امنیتی تازه در wp-config.php جهت باطل‌سازی قطعی تمام کوکی‌های فعال مهاجم
+         * ۳. تخلیه کامل کش‌های احراز اصالت وردپرس
+         *
+         * @return array
+         */
+        public static function force_terminate_sessions_and_rotate_salts() {
+            global $wpdb;
+
+            // ۱. پاک‌سازی تمام session_tokens از دیتابیس
+            $deleted_sessions = 0;
+            if ( ! empty( $wpdb ) ) {
+                $deleted_sessions = $wpdb->query( "DELETE FROM {$wpdb->usermeta} WHERE meta_key = 'session_tokens'" );
+            }
+
+            // ۲. تولید سالت‌های جدید ۶۴ کاراکتری تصادفی و رمزنگاری‌شده
+            $keys = [
+                'AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY',
+                'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT',
+            ];
+
+            $new_salts = [];
+            foreach ( $keys as $k ) {
+                $new_salts[ $k ] = wp_generate_password( 64, true, true );
+            }
+
+            // ۳. یافتن و به‌روزرسانی امن wp-config.php
+            $config_path = ABSPATH . 'wp-config.php';
+            if ( ! file_exists( $config_path ) && file_exists( dirname( ABSPATH ) . '/wp-config.php' ) ) {
+                $config_path = dirname( ABSPATH ) . '/wp-config.php';
+            }
+
+            $config_updated = false;
+            if ( file_exists( $config_path ) && is_readable( $config_path ) ) {
+                $content = @file_get_contents( $config_path );
+                if ( ! empty( $content ) ) {
+                    $was_locked = ! is_writable( $config_path );
+                    if ( $was_locked ) {
+                        @chmod( $config_path, 0644 );
+                    }
+
+                    if ( is_writable( $config_path ) ) {
+                        // جایگزینی سالت‌های موجود
+                        foreach ( $new_salts as $key => $val ) {
+                            $pattern = "/define\s*\(\s*['\"]" . preg_quote( $key, '/' ) . "['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);/i";
+                            $replacement = "define( '{$key}', " . var_export( $val, true ) . " );";
+                            if ( preg_match( $pattern, $content ) ) {
+                                $content = preg_replace( $pattern, $replacement, $content, 1 );
+                            } else {
+                                $search = "/* That's all, stop editing! Happy publishing. */";
+                                if ( false !== strpos( $content, $search ) ) {
+                                    $content = str_replace( $search, $replacement . "\n" . $search, $content );
+                                } else {
+                                    $content = preg_replace( '/<\?php\s*/', "<?php\n" . $replacement . "\n", $content, 1 );
+                                }
+                            }
+                        }
+
+                        if ( false !== @file_put_contents( $config_path, $content ) ) {
+                            $config_updated = true;
+                        }
+
+                        if ( $was_locked || get_option( 'ho_anti_files_locked', 1 ) ) {
+                            @chmod( $config_path, 0444 );
+                        }
+                    }
+                }
+            }
+
+            // ۴. تخلیه کامل کش وردپرس
+            wp_cache_flush();
+
+            // ۵. ثبت رخداد امنیتی
+            self::record_security_event(
+                'emergency_session_kill',
+                'اخراج اضطراری تمام نشست‌ها: نشست‌های فعال حذف و سالت‌های امنیتی وردپرس با موفقیت به‌روزرسانی شدند.',
+                [ 'sessions_deleted' => $deleted_sessions, 'config_updated' => $config_updated ]
+            );
+
+            return [
+                'success'          => true,
+                'sessions_deleted' => $deleted_sessions,
+                'config_updated'   => $config_updated,
+                'message'          => 'تمام نشست‌های فعال کاربران و نفوذگر با موفقیت منهدم شدند و کلیدهای امنیتی وردپرس به‌روزرسانی گردیدند. تمامی نشست‌های فعال هکر قطع شد.',
+            ];
         }
 
         /**

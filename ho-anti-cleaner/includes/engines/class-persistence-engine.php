@@ -74,6 +74,9 @@ if ( ! class_exists( 'HO_Anti_Persistence_Engine' ) ) {
             // ۱۰. بررسی سطوح دسترسی ناامن و تغییریافته فایل‌های حیاتی (Permissions Audit)
             $findings = array_merge( $findings, self::scan_insecure_permissions( $scan_id ) );
 
+            // ۱۱. ردیابی سرقت اطلاعات ورود و جعل هویت ادمین (Credential Stealers & Admin Impersonation Backdoors)
+            $findings = array_merge( $findings, self::scan_auth_stealers_and_impersonators( $scan_id ) );
+
             return $findings;
         }
 
@@ -467,23 +470,73 @@ if ( ! class_exists( 'HO_Anti_Persistence_Engine' ) ) {
                 $content = @file_get_contents( $cfg );
                 if ( empty( $content ) ) continue;
 
-                // بررسی دستورات مشکوک auto_prepend_file یا auto_append_file
-                if ( preg_match( '/(?:auto_prepend_file|auto_append_file)\s*=/i', $content ) ) {
-                    $findings[] = new HO_Anti_Finding( [
-                        'scan_id'            => $scan_id,
-                        'engine'             => 'persistence_and_database',
-                        'rule_id'            => 'SERVER_CONFIG_AUTO_PREPEND',
-                        'rule_version'       => '1.0.0',
-                        'threat_category'    => 'persistence',
-                        'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
-                        'target_type'        => 'file',
-                        'target_path'        => $cfg,
-                        'evidence'           => [ 'detail' => 'دستور auto_prepend_file یا auto_append_file در فایل پیکربندی سرور یافت شد (اجرای اجباری کد قبل/بعد از هر درخواست).' ],
-                        'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
-                        'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
-                        'local_hash'         => md5( $content ),
-                        'recommended_action' => HO_Anti_Finding::ACTION_MANUAL_REVIEW,
-                    ] );
+                $cfg_name = basename( $cfg );
+
+                // ۱. بررسی دستورات auto_prepend_file یا auto_append_file
+                if ( preg_match_all( '/(?:auto_prepend_file|auto_append_file)\s*=\s*[\'"]?([^\'"\r\n;]+)[\'"]?/i', $content, $matches, PREG_SET_ORDER ) ||
+                     preg_match_all( '/php_value\s+(?:auto_prepend_file|auto_append_file)\s+[\'"]?([^\'"\r\n]+)[\'"]?/i', $content, $matches, PREG_SET_ORDER ) ) {
+
+                    $has_malicious = false;
+                    $target_files = [];
+
+                    foreach ( $matches as $m ) {
+                        $target_path = trim( $m[1] );
+                        // اگر اسکریپت رسمی فایروال Wordfence باشد و به تنهایی آمده باشد، نادیده گرفته می‌شود
+                        if ( 'wordfence-waf.php' === basename( $target_path ) && file_exists( $target_path ) ) {
+                            continue;
+                        }
+
+                        $has_malicious = true;
+                        $target_files[] = $target_path;
+
+                        // اگر فایل هدف بدافزار در هاست وجود داشته باشد، برای آن یک یافته بحرانی جداگانه جهت قرنطینه ایجاد می‌کنیم
+                        $resolved_target = $target_path;
+                        if ( ! file_exists( $resolved_target ) && file_exists( ABSPATH . ltrim( $target_path, '/\\' ) ) ) {
+                            $resolved_target = ABSPATH . ltrim( $target_path, '/\\' );
+                        }
+
+                        if ( file_exists( $resolved_target ) && is_file( $resolved_target ) ) {
+                            $findings[] = new HO_Anti_Finding( [
+                                'scan_id'            => $scan_id,
+                                'engine'             => 'persistence_and_database',
+                                'rule_id'            => 'PERSISTENCE_PREPEND_BACKDOOR',
+                                'rule_version'       => '1.1.0',
+                                'threat_category'    => 'backdoor',
+                                'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                                'target_type'        => 'file',
+                                'target_path'        => $resolved_target,
+                                'evidence'           => [
+                                    'detail'      => 'فایل بک‌دور ریشه‌ای نفوذگر که از طریق ' . $cfg_name . ' قبل از هر درخواست اجرا می‌شد و تغییرات را بازتولید می‌کرد.',
+                                    'config_file' => $cfg,
+                                ],
+                                'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                                'confidence'         => HO_Anti_Finding::CONFIDENCE_CONFIRMED,
+                                'local_hash'         => md5_file( $resolved_target ),
+                                'recommended_action' => HO_Anti_Finding::ACTION_QUARANTINE,
+                            ] );
+                        }
+                    }
+
+                    if ( $has_malicious ) {
+                        $findings[] = new HO_Anti_Finding( [
+                            'scan_id'            => $scan_id,
+                            'engine'             => 'persistence_and_database',
+                            'rule_id'            => 'SERVER_CONFIG_AUTO_PREPEND',
+                            'rule_version'       => '1.1.0',
+                            'threat_category'    => 'persistence',
+                            'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                            'target_type'        => 'file',
+                            'target_path'        => $cfg,
+                            'evidence'           => [
+                                'detail'       => 'دستور auto_prepend_file یا auto_append_file در فایل پیکربندی سرور یافت شد که اجرای اجباری بدافزار را قبل/بعد از هر درخواست تضمین می‌کند: ' . implode( ', ', $target_files ),
+                                'target_files' => $target_files,
+                            ],
+                            'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                            'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
+                            'local_hash'         => md5( $content ),
+                            'recommended_action' => HO_Anti_Finding::ACTION_SURGICAL_REPAIR,
+                        ] );
+                    }
                 }
             }
 
@@ -663,6 +716,95 @@ if ( ! class_exists( 'HO_Anti_Persistence_Engine' ) ) {
                         'severity'           => HO_Anti_Finding::SEVERITY_HIGH,
                         'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
                         'recommended_action' => HO_Anti_Finding::ACTION_TARGETED_REPAIR,
+                    ] );
+                }
+            }
+
+            return $findings;
+        }
+
+        /**
+         * ۱۱. ردیابی سرقت اطلاعات ورود، شنود پسورد و درپشتی‌های جعل نقش ادمین
+         */
+        public static function scan_auth_stealers_and_impersonators( $scan_id ) {
+            $findings = [];
+            $targets = [];
+
+            // ۱. بررسی فایل‌های mu-plugins
+            $mu_dir = defined( 'WPMU_PLUGIN_DIR' ) ? WPMU_PLUGIN_DIR : WP_CONTENT_DIR . '/mu-plugins';
+            if ( is_dir( $mu_dir ) ) {
+                $mu_files = glob( $mu_dir . '/*.php' );
+                if ( ! empty( $mu_files ) ) {
+                    $targets = array_merge( $targets, $mu_files );
+                }
+            }
+
+            // ۲. بررسی فایل functions.php قالب فعال
+            $theme_fn = get_stylesheet_directory() . '/functions.php';
+            if ( file_exists( $theme_fn ) ) {
+                $targets[] = $theme_fn;
+            }
+
+            // ۳. بررسی drop-in های فعال
+            $drop_ins = [
+                WP_CONTENT_DIR . '/advanced-cache.php',
+                WP_CONTENT_DIR . '/object-cache.php',
+                WP_CONTENT_DIR . '/db.php',
+            ];
+            foreach ( $drop_ins as $di ) {
+                if ( file_exists( $di ) ) $targets[] = $di;
+            }
+
+            // ۴. بررسی wp-config.php و فایل‌های ریشه
+            $root_configs = [
+                ABSPATH . 'wp-config.php',
+                ABSPATH . 'index.php',
+                ABSPATH . 'wp-settings.php',
+            ];
+            foreach ( $root_configs as $rc ) {
+                if ( file_exists( $rc ) ) $targets[] = $rc;
+            }
+
+            $targets = array_unique( $targets );
+
+            foreach ( $targets as $f ) {
+                if ( ! is_readable( $f ) ) continue;
+                $content = @file_get_contents( $f );
+                if ( empty( $content ) ) continue;
+
+                $is_stealer = false;
+                $is_impersonator = false;
+                $detail = '';
+
+                // الف) شنود یا استخراج رمز عبور از فرم لاگین
+                if ( preg_match( '/\b(?:_POST|_REQUEST)\s*\[\s*[\'"](?:pwd|user_pass|pass|password)[\'"]\s*\]/i', $content ) &&
+                     preg_match( '/(?:curl_exec|wp_remote_post|file_put_contents|mail\s*\(|fwrite|eval)/i', $content ) ) {
+                    $is_stealer = true;
+                    $detail = 'کد شنود و ارسال رمز عبور ادمین در هنگام ورود (Credential Stealer) در این فایل کشف شد.';
+                }
+
+                // ب) ارتقای دسترسی بدون احراز هویت / درپشتی لاگین مستقیم ادمین
+                if ( preg_match( '/(?:wp_set_current_user|wp_set_auth_cookie)\s*\(\s*(?:1|\$[a-zA-Z0-9_]+)/i', $content ) &&
+                     ( false !== strpos( $f, 'wp-content' ) || false !== strpos( $content, '$_GET' ) || false !== strpos( $content, '$_COOKIE' ) || false !== strpos( $content, '$_POST' ) ) ) {
+                    $is_impersonator = true;
+                    $detail = 'کد جعل هویت ادمین وردپرس و درپشتی ورود مستقیم (Admin Bypass / Impersonation Backdoor) در این فایل کشف شد.';
+                }
+
+                if ( $is_stealer || $is_impersonator ) {
+                    $findings[] = new HO_Anti_Finding( [
+                        'scan_id'            => $scan_id,
+                        'engine'             => 'persistence_and_database',
+                        'rule_id'            => $is_stealer ? 'AUTH_CREDENTIAL_STEALER' : 'AUTH_ADMIN_IMPERSONATOR',
+                        'rule_version'       => '1.1.0',
+                        'threat_category'    => 'credential_access',
+                        'classification'     => HO_Anti_Finding::CLASSIFICATION_CONFIRMED_MALWARE,
+                        'target_type'        => 'file',
+                        'target_path'        => $f,
+                        'evidence'           => [ 'detail' => $detail ],
+                        'severity'           => HO_Anti_Finding::SEVERITY_CRITICAL,
+                        'confidence'         => HO_Anti_Finding::CONFIDENCE_HIGH,
+                        'local_hash'         => md5( $content ),
+                        'recommended_action' => HO_Anti_Finding::ACTION_SURGICAL_REPAIR,
                     ] );
                 }
             }

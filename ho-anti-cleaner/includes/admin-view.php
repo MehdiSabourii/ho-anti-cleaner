@@ -141,6 +141,26 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
         <!-- زبانه ۱ (پیش‌فرض): سپر ضد تزریق و محافظت بلادرنگ -->
         <div id="tab-shield" class="afc-tab-pane active">
 
+            <!-- کارت اخراج اضطراری نفوذگر فعال و ابطال تمام نشست‌ها -->
+            <div class="afc-box" style="margin-bottom: 25px; border-right: 4px solid #dc2626; background: #fff5f5;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px;">
+                    <div>
+                        <h2 style="margin:0 0 8px 0; font-size:18px; color:#b91c1c;">
+                            <span class="dashicons dashicons-shield" style="color:#dc2626;"></span>
+                            اخراج اضطراری هکر و قطع فوری تمام دسترسی‌ها (Emergency Kill-Switch)
+                        </h2>
+                        <p style="margin:0; color:#7f1d1d; max-width:750px; font-size:13.5px; line-height:1.7;">
+                            اگر مهاجم با وجود تغییر رمز عبور همچنان با دسترسی ادمین شما فعالیت مخرب دارد، به این دلیل است که توکن‌های نشست فعال در پایگاه‌داده ذخیره شده یا از کوکی‌های امضاشده قدیمی استفاده می‌کند. با این دکمه، <strong>تمامی نشست‌های فعال (session_tokens) در دیتابیس فوراً نابود شده</strong>، ۸ سالت امنیتی تازه در <code>wp-config.php</code> بازنویسی می‌شوند و تمام ارتباطات مهاجم در کسری از ثانیه قطع می‌گردد.
+                        </p>
+                    </div>
+                    <div>
+                        <button id="afc-btn-emergency-kick" class="button button-hero" style="background:#dc2626; border-color:#b91c1c; color:#fff; font-weight:bold;">
+                            <span class="dashicons dashicons-warning"></span> اخراج فوری هکر و نوسازی سالت‌ها
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- کارت معرفی وضعیت قفل ضد تزریق -->
             <div class="afc-box" style="margin-bottom: 25px; border-right: 4px solid #3b82f6;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px;">
@@ -453,20 +473,26 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
 
             <!-- ارزیابی سلامت امنیتی -->
             <div class="afc-box" style="margin-bottom: 25px;">
-                <h3><span class="dashicons dashicons-privacy"></span> بررسی سلامت امنیتی و سطوح دسترسی فایل‌ها</h3>
-                <table class="afc-table">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+                    <h3 style="margin:0;"><span class="dashicons dashicons-privacy"></span> بررسی سلامت امنیتی و سطوح دسترسی فایل‌ها</h3>
+                </div>
+                <table class="afc-table" id="afc-table-security-health">
                     <thead>
                         <tr>
                             <th>مورد بررسی</th>
                             <th>وضعیت</th>
-                            <th>توضیحات و پیشنهاد</th>
+                            <th>توضیحات و جزئیات</th>
+                            <th>عملیات امنیتی</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ( $security_checks as $chk ): ?>
-                            <tr>
+                        <?php foreach ( $security_checks as $chk ): 
+                            $check_key  = isset( $chk['key'] ) ? $chk['key'] : '';
+                            $is_fixable = ! empty( $chk['fixable'] );
+                        ?>
+                            <tr data-check-key="<?php echo esc_attr( $check_key ); ?>">
                                 <td><strong><?php echo esc_html( $chk['title'] ); ?></strong></td>
-                                <td>
+                                <td class="afc-health-status-col">
                                     <?php if ( 'good' === $chk['status'] ): ?>
                                         <span class="afc-badge afc-badge-safe">ایمن</span>
                                     <?php elseif ( 'warning' === $chk['status'] ): ?>
@@ -475,7 +501,18 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
                                         <span class="afc-badge afc-badge-danger">خطرناک</span>
                                     <?php endif; ?>
                                 </td>
-                                <td><?php echo esc_html( $chk['detail'] ); ?></td>
+                                <td class="afc-health-detail-col"><?php echo esc_html( $chk['detail'] ); ?></td>
+                                <td class="afc-health-action-col">
+                                    <?php if ( $is_fixable ): ?>
+                                        <button class="button button-small button-primary afc-btn-fix-health" data-check="<?php echo esc_attr( $check_key ); ?>" style="background:#16a34a; border-color:#15803d;">
+                                            <span class="dashicons dashicons-shield"></span> اصلاح خودکار
+                                        </button>
+                                    <?php elseif ( 'good' === $chk['status'] ): ?>
+                                        <span class="afc-badge afc-badge-safe"><span class="dashicons dashicons-yes"></span> استاندارد</span>
+                                    <?php else: ?>
+                                        <span style="color:#64748b; font-size:12px;">تنظیم از طریق هاست</span>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

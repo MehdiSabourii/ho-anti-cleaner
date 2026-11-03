@@ -20,6 +20,8 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             add_action( 'wp_ajax_afc_repair_all_files',          [ $this, 'ajax_repair_all_files' ] );
             add_action( 'wp_ajax_afc_optimize_database',         [ $this, 'ajax_optimize_database' ] );
             add_action( 'wp_ajax_afc_generate_salts',            [ $this, 'ajax_generate_salts' ] );
+            add_action( 'wp_ajax_afc_emergency_kick_sessions',    [ $this, 'ajax_emergency_kick_sessions' ] );
+            add_action( 'wp_ajax_afc_fix_security_check',        [ $this, 'ajax_fix_security_check' ] );
             add_action( 'wp_ajax_afc_delete_single_file',        [ $this, 'ajax_delete_single_file' ] );
 
             // اکشن‌های جدید سپر امنیتی و ضد تزریق (Anti-Injection Protection)
@@ -182,6 +184,39 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             $this->verify_permissions();
             $salts = HO_Anti_Optimizer::generate_fresh_salts();
             wp_send_json_success( [ 'salts' => $salts ] );
+        }
+
+        public function ajax_emergency_kick_sessions() {
+            $this->verify_permissions();
+            if ( class_exists( 'HO_Anti_Protection' ) ) {
+                $res = HO_Anti_Protection::force_terminate_sessions_and_rotate_salts();
+                if ( ! empty( $res['success'] ) ) {
+                    wp_send_json_success( $res );
+                } else {
+                    wp_send_json_error( $res );
+                }
+            } else {
+                wp_send_json_error( [ 'message' => 'ماژول حفاظتی ضد نفوذ در دسترس نیست.' ] );
+            }
+        }
+
+        public function ajax_fix_security_check() {
+            $this->verify_permissions();
+            $check_key = isset( $_POST['check_key'] ) ? sanitize_text_field( wp_unslash( $_POST['check_key'] ) ) : '';
+            if ( empty( $check_key ) ) {
+                wp_send_json_error( [ 'message' => 'کلید ارزیابی امنیتی مشخص نشده است.' ] );
+            }
+
+            if ( class_exists( 'HO_Anti_Optimizer' ) ) {
+                $res = HO_Anti_Optimizer::fix_security_check( $check_key );
+                if ( ! empty( $res['success'] ) ) {
+                    wp_send_json_success( $res );
+                } else {
+                    wp_send_json_error( $res );
+                }
+            } else {
+                wp_send_json_error( [ 'message' => 'موتور بهینه‌سازی و ارزیابی امنیتی در دسترس نیست.' ] );
+            }
         }
 
         public function ajax_delete_single_file() {

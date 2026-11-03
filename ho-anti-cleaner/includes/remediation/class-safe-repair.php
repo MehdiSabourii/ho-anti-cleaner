@@ -411,6 +411,14 @@ if ( ! class_exists( 'HO_Anti_Safe_Repair' ) ) {
                 return [ 'success' => false, 'message' => 'فایل یافت نشد یا قابل خواندن نیست.' ];
             }
 
+            $norm_path = function_exists( 'wp_normalize_path' ) ? wp_normalize_path( $file_path ) : str_replace( '\\', '/', $file_path );
+            $basename  = strtolower( basename( $norm_path ) );
+
+            // اگر فایل از نوع پیکربندی سرور (.user.ini یا .htaccess یا php.ini) باشد
+            if ( in_array( $basename, [ '.user.ini', '.htaccess', 'php.ini' ], true ) ) {
+                return self::repair_server_config_file( $file_path, $finding_id );
+            }
+
             $original_content = @file_get_contents( $file_path );
             if ( empty( $original_content ) ) {
                 return [ 'success' => false, 'message' => 'فایل خالی است.' ];
@@ -572,6 +580,169 @@ if ( ! class_exists( 'HO_Anti_Safe_Repair' ) ) {
             return [
                 'success' => false,
                 'message' => 'الگوی تزریقی شناخته‌شده‌ای در این فایل برای جراحی خودکار یافت نشد (نیازمند بازبینی دستی یا جایگزینی از نسخه اصلی سازنده).',
+            ];
+        }
+
+        /**
+         * جراحی و پاک‌سازی فایل‌های پیکربندی سرور (.user.ini, .htaccess, php.ini)
+         * خنثی‌سازی زنجیره تزریق خودکار auto_prepend_file / auto_append_file و قرنطینه فایل بدافزار ریشه‌ای
+         *
+         * @param string $file_path مسیر کامل فایل پیکربندی
+         * @param string $finding_id شناسه یافته
+         * @return array
+         */
+        public static function repair_server_config_file( $file_path, $finding_id = '' ) {
+            if ( ! file_exists( $file_path ) || ! is_readable( $file_path ) ) {
+                return [ 'success' => false, 'message' => 'فایل پیکربندی سرور یافت نشد یا قابل خواندن نیست.' ];
+            }
+
+            $content = @file_get_contents( $file_path );
+            if ( false === $content ) {
+                return [ 'success' => false, 'message' => 'امکان خواندن محتوای فایل پیکربندی وجود ندارد.' ];
+            }
+
+            $norm_path = function_exists( 'wp_normalize_path' ) ? wp_normalize_path( $file_path ) : str_replace( '\\', '/', $file_path );
+            $basename  = strtolower( basename( $norm_path ) );
+            $modifications = [];
+            $neutralized_backdoors = [];
+            $new_content = $content;
+
+            // پشتیبان‌گیری در قرنطینه قبل از جراحی
+            $backup_res = HO_Anti_Quarantine_Manager::quarantine_file(
+                $file_path,
+                'پشتیبان قبل از پاک‌سازی پیکربندی سرور: ' . $basename,
+                'before_server_config_repair',
+                $finding_id,
+                false
+            );
+
+            if ( ! $backup_res['success'] ) {
+                return [
+                    'success' => false,
+                    'message' => 'خطا در ایجاد بسته پشتیبان قرنطینه: ' . $backup_res['message'],
+                ];
+            }
+
+            if ( '.user.ini' === $basename || 'php.ini' === $basename ) {
+                // استخراج دستورات auto_prepend_file و auto_append_file
+                if ( preg_match_all( '/^\s*(?:auto_prepend_file|auto_append_file)\s*=\s*[\'"]?([^\'"\r\n;]+)[\'"]?/mi', $content, $matches, PREG_SET_ORDER ) ) {
+                    foreach ( $matches as $match ) {
+                        $full_line   = $match[0];
+                        $target_file = trim( $match[1] );
+
+                        // اگر اسکریپت قانونی فایروال وردفنس باشد، دست‌نخورده باقی می‌ماند
+                        if ( 'wordfence-waf.php' === basename( $target_file ) && file_exists( $target_file ) ) {
+                            continue;
+                        }
+
+                        // اگر فایل هدف بدافزار وجود داشته باشد، آن را قرنطینه و خنثی می‌کنیم
+                        if ( ! empty( $target_file ) ) {
+                            $resolved_target = $target_file;
+                            if ( ! file_exists( $resolved_target ) && file_exists( ABSPATH . ltrim( $target_file, '/\\' ) ) ) {
+                                $resolved_target = ABSPATH . ltrim( $target_file, '/\\' );
+                            }
+
+                            if ( file_exists( $resolved_target ) && is_file( $resolved_target ) ) {
+                                $q_res = HO_Anti_Quarantine_Manager::quarantine_file(
+                                    $resolved_target,
+                                    'فایل بک‌دور متصل به دستور auto_prepend_file در ' . $basename,
+                                    'quarantine_malware_file',
+                                    $finding_id,
+                                    true
+                                );
+                                if ( $q_res['success'] ) {
+                                    $neutralized_backdoors[] = basename( $resolved_target );
+                                }
+                            }
+                        }
+
+                        // حذف خط مخرب از محتوای ini
+                        $new_content = preg_replace( '/' . preg_quote( $full_line, '/' ) . '\r?\n?/i', '', $new_content );
+                        $modifications[] = 'حذف دستور مخرب auto_prepend/append (' . basename( $target_file ) . ')';
+                    }
+                }
+            } elseif ( '.htaccess' === $basename ) {
+                // استخراج دستورات php_value / php_flag auto_prepend_file
+                if ( preg_match_all( '/^\s*php_value\s+(?:auto_prepend_file|auto_append_file)\s+[\'"]?([^\'"\r\n]+)[\'"]?/mi', $content, $matches, PREG_SET_ORDER ) ) {
+                    foreach ( $matches as $match ) {
+                        $full_line   = $match[0];
+                        $target_file = trim( $match[1] );
+
+                        if ( 'wordfence-waf.php' === basename( $target_file ) && file_exists( $target_file ) ) {
+                            continue;
+                        }
+
+                        if ( ! empty( $target_file ) && file_exists( $target_file ) && is_file( $target_file ) ) {
+                            $q_res = HO_Anti_Quarantine_Manager::quarantine_file(
+                                $target_file,
+                                'فایل بک‌دور متصل به دستور htaccess auto_prepend_file',
+                                'quarantine_malware_file',
+                                $finding_id,
+                                true
+                            );
+                            if ( $q_res['success'] ) {
+                                $neutralized_backdoors[] = basename( $target_file );
+                            }
+                        }
+
+                        $new_content = preg_replace( '/' . preg_quote( $full_line, '/' ) . '\r?\n?/i', '', $new_content );
+                        $modifications[] = 'حذف دستور htaccess php_value auto_prepend/append';
+                    }
+                }
+            }
+
+            // اگر تغییری انجام شده باشد
+            if ( ! empty( $modifications ) || $new_content !== $content ) {
+                $was_locked = ! is_writable( $file_path );
+                if ( $was_locked ) {
+                    @chmod( $file_path, 0644 );
+                }
+
+                // تمیزکاری خطوط خالی اضافی
+                $new_content = trim( $new_content );
+                if ( empty( $new_content ) ) {
+                    $new_content = "; Sanitized and protected by HO Anti Security Shield\n";
+                } else {
+                    $new_content .= "\n";
+                }
+
+                if ( false === @file_put_contents( $file_path, $new_content ) ) {
+                    return [
+                        'success' => false,
+                        'message' => 'خطا در ذخیره فایل پیکربندی سرور پس از پاک‌سازی.',
+                    ];
+                }
+
+                if ( get_option( 'ho_anti_files_locked', 1 ) ) {
+                    @chmod( $file_path, 0444 );
+                }
+
+                $msg = 'فایل پیکربندی ' . $basename . ' با موفقیت جراحی و پاک‌سازی شد (' . implode( '، ', $modifications ) . ').';
+                if ( ! empty( $neutralized_backdoors ) ) {
+                    $msg .= ' همچنین فایل(های) بدافزار ریشه‌ای متصل به آن (' . implode( '، ', $neutralized_backdoors ) . ') با موفقیت قرنطینه و حذف شدند.';
+                }
+
+                if ( class_exists( 'HO_Anti_Protection' ) ) {
+                    HO_Anti_Protection::record_security_event(
+                        'server_config_repaired',
+                        $msg,
+                        [ 'file' => $basename, 'neutralized' => $neutralized_backdoors ]
+                    );
+                }
+
+                return [
+                    'success'       => true,
+                    'action'        => 'server_config_repaired',
+                    'backup_id'     => $backup_res['backup_id'],
+                    'modifications' => $modifications,
+                    'neutralized'   => $neutralized_backdoors,
+                    'message'       => $msg,
+                ];
+            }
+
+            return [
+                'success' => false,
+                'message' => 'دستور مخربی در این فایل پیکربندی برای پاک‌سازی یافت نشد.',
             ];
         }
     }
