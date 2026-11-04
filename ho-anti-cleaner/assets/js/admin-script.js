@@ -1254,4 +1254,315 @@ jQuery(document).ready(function ($) {
         });
     });
 
+    // ==========================================
+    // مدیریت پایگاه قوانین WAF و لیست سفید (Whitelisted URLs)
+    // ==========================================
+    var wafRulesCatalog = [];
+    var wafCategories = {};
+    var wafActiveCategory = 'all';
+    var wafRulesLoaded = false;
+    var wafWhitelistLoaded = false;
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    // بارگذاری لیست سفید
+    function loadWhitelistedUrls() {
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_get_whitelisted_urls',
+                nonce: afcData.nonce
+            },
+            success: function (res) {
+                if (res.success && res.data) {
+                    renderWhitelistedUrls(res.data.whitelisted_urls || []);
+                    wafWhitelistLoaded = true;
+                }
+            },
+            error: function () {
+                $('#afc-whitelist-list').html('<tr><td colspan="3" style="text-align:center; color:#dc2626;">خطا در دریافت لیست سفید.</td></tr>');
+            }
+        });
+    }
+
+    function renderWhitelistedUrls(list) {
+        var $tbody = $('#afc-whitelist-list');
+        $tbody.empty();
+
+        if (!list || list.length === 0) {
+            $tbody.html('<tr><td colspan="3" style="text-align:center; color:#94a3b8; padding:20px;">هیچ آدرسی در لیست سفید ثبت نشده است. تمام درخواست‌ها توسط WAF اعتبارسنجی می‌شوند.</td></tr>');
+            return;
+        }
+
+        list.forEach(function (item) {
+            var dateStr = item.added_at ? new Date(item.added_at * 1000).toLocaleString('fa-IR') : '-';
+            var tr = $('<tr>' +
+                '<td><code style="background:#f1f5f9; padding:4px 8px; border-radius:4px; font-size:13px; color:#0f172a;">' + escapeHtml(item.url_pattern) + '</code></td>' +
+                '<td style="color:#64748b; font-size:12px;">' + dateStr + '</td>' +
+                '<td><button type="button" class="button button-small button-link-delete afc-btn-remove-whitelist" data-pattern="' + escapeHtml(item.url_pattern) + '" style="color:#dc2626; font-weight:600;"><span class="dashicons dashicons-trash" style="vertical-align:middle; font-size:16px;"></span> حذف</button></td>' +
+                '</tr>');
+            $tbody.append(tr);
+        });
+    }
+
+    // افزودن آدرس به لیست سفید
+    $('#afc-btn-add-whitelist').on('click', function (e) {
+        e.preventDefault();
+        var $input = $('#afc-input-whitelist-url');
+        var pattern = $.trim($input.val());
+
+        if (!pattern) {
+            alert('لطفاً آدرس یا الگوی مسیر مورد نظر را وارد نمایید.');
+            $input.focus();
+            return;
+        }
+
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('در حال ثبت...');
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_add_whitelisted_url',
+                nonce: afcData.nonce,
+                url_pattern: pattern
+            },
+            success: function (res) {
+                $btn.prop('disabled', false).html('<span class="dashicons dashicons-plus-alt2"></span> افزودن به لیست سفید');
+                if (res.success && res.data) {
+                    $input.val('');
+                    renderWhitelistedUrls(res.data.whitelisted_urls || []);
+                    logMessage('آدرس ' + pattern + ' با موفقیت به لیست سفید WAF اضافه شد.', 'success');
+                } else {
+                    alert((res.data && res.data.message) ? res.data.message : 'خطا در افزودن آدرس.');
+                }
+            },
+            error: function () {
+                $btn.prop('disabled', false).html('<span class="dashicons dashicons-plus-alt2"></span> افزودن به لیست سفید');
+                alert('خطا در ارتباط با سرور.');
+            }
+        });
+    });
+
+    // حذف آدرس از لیست سفید
+    $(document).on('click', '.afc-btn-remove-whitelist', function (e) {
+        e.preventDefault();
+        var pattern = $(this).data('pattern');
+        if (!confirm('آیا از حذف این آدرس (' + pattern + ') از لیست سفید WAF اطمینان دارید؟')) return;
+
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('در حال حذف...');
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_remove_whitelisted_url',
+                nonce: afcData.nonce,
+                url_pattern: pattern
+            },
+            success: function (res) {
+                if (res.success && res.data) {
+                    renderWhitelistedUrls(res.data.whitelisted_urls || []);
+                    logMessage('آدرس ' + pattern + ' از لیست سفید WAF حذف شد.', 'system');
+                } else {
+                    alert((res.data && res.data.message) ? res.data.message : 'خطا در حذف.');
+                }
+            },
+            error: function () {
+                alert('خطا در ارتباط با سرور.');
+            }
+        });
+    });
+
+    // بارگذاری کاتالوگ قوانین WAF
+    function loadWafRulesCatalog() {
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_get_rules_catalog',
+                nonce: afcData.nonce
+            },
+            success: function (res) {
+                if (res.success && res.data) {
+                    wafRulesCatalog = res.data.rules || [];
+                    wafCategories = res.data.categories || {};
+                    wafRulesLoaded = true;
+                    renderCategoryFilters(wafCategories, wafRulesCatalog.length);
+                    filterAndRenderRules();
+                } else {
+                    $('#afc-rules-body').html('<tr><td colspan="5" style="text-align:center; color:#dc2626; padding:20px;">خطا در بارگذاری قوانین فایروال.</td></tr>');
+                }
+            },
+            error: function () {
+                $('#afc-rules-body').html('<tr><td colspan="5" style="text-align:center; color:#dc2626; padding:20px;">خطای شبکه در دریافت قوانین.</td></tr>');
+            }
+        });
+    }
+
+    // رندر قرص‌های دسته‌بندی
+    function renderCategoryFilters(categories, totalCount) {
+        var $container = $('#afc-category-filters');
+        $container.empty();
+
+        var allBtn = $('<button type="button" class="afc-cat-pill active" data-category="all" style="padding:6px 14px; border-radius:20px; font-size:12px; border:1px solid #2563eb; background:#2563eb; color:#fff; cursor:pointer; font-weight:600; transition:all 0.2s;">همه (' + totalCount + ')</button>');
+        $container.append(allBtn);
+
+        var sortedCats = Object.keys(categories).sort(function (a, b) {
+            return categories[b] - categories[a];
+        });
+
+        sortedCats.forEach(function (cat) {
+            var count = categories[cat];
+            var btn = $('<button type="button" class="afc-cat-pill" data-category="' + cat + '" style="padding:6px 14px; border-radius:20px; font-size:12px; border:1px solid #cbd5e1; background:#f8fafc; color:#475569; cursor:pointer; font-weight:500; transition:all 0.2s;">' + escapeHtml(cat) + ' (' + count + ')</button>');
+            $container.append(btn);
+        });
+    }
+
+    // تغییر تب دسته‌بندی
+    $(document).on('click', '.afc-cat-pill', function (e) {
+        e.preventDefault();
+        $('.afc-cat-pill').removeClass('active').css({ 'background': '#f8fafc', 'color': '#475569', 'border-color': '#cbd5e1', 'font-weight': '500' });
+        $(this).addClass('active').css({ 'background': '#2563eb', 'color': '#fff', 'border-color': '#2563eb', 'font-weight': '600' });
+        wafActiveCategory = $(this).data('category');
+        filterAndRenderRules();
+    });
+
+    // جستجوی زنده در قوانین
+    $('#afc-rules-search').on('input', function () {
+        filterAndRenderRules();
+    });
+
+    // فیلتر و رندر قوانین در جدول
+    function filterAndRenderRules() {
+        var query = $.trim($('#afc-rules-search').val()).toLowerCase();
+        var $tbody = $('#afc-rules-body');
+        $tbody.empty();
+
+        var filtered = wafRulesCatalog.filter(function (rule) {
+            if (wafActiveCategory !== 'all' && rule.category !== wafActiveCategory) {
+                return false;
+            }
+            if (query) {
+                var matchName = (rule.name || '').toLowerCase().indexOf(query) !== -1;
+                var matchId = (rule.id || '').toLowerCase().indexOf(query) !== -1;
+                var matchCat = (rule.category || '').toLowerCase().indexOf(query) !== -1;
+                var matchSw = (rule.software || '').toLowerCase().indexOf(query) !== -1;
+                return matchName || matchId || matchCat || matchSw;
+            }
+            return true;
+        });
+
+        $('#afc-rules-count-display').text('نمایش ' + filtered.length + ' از مجموع ' + wafRulesCatalog.length + ' قانون');
+
+        if (filtered.length === 0) {
+            $tbody.html('<tr><td colspan="5" style="text-align:center; padding:30px; color:#94a3b8;">هیچ قانونی با مشخصات جستجو شده یافت نشد.</td></tr>');
+            return;
+        }
+
+        var fragment = document.createDocumentFragment();
+        filtered.forEach(function (rule) {
+            var tr = document.createElement('tr');
+
+            var sevClass = 'afc-badge-safe';
+            var sevLabel = 'عادی';
+            if (rule.severity === 'critical') {
+                sevClass = 'afc-badge-danger';
+                sevLabel = 'بحرانی';
+            } else if (rule.severity === 'high') {
+                sevClass = 'afc-badge-warning';
+                sevLabel = 'بالا';
+            } else if (rule.severity === 'medium') {
+                sevClass = 'afc-badge';
+                sevLabel = 'متوسط';
+            }
+
+            var checkedAttr = rule.enabled ? 'checked' : '';
+
+            tr.innerHTML = 
+                '<td><strong style="color:#0f172a; font-family:monospace; font-size:12px;">' + escapeHtml(rule.id) + '</strong></td>' +
+                '<td>' +
+                    '<span style="font-weight:600; color:#1e293b;">' + escapeHtml(rule.name) + '</span>' +
+                    (rule.software ? '<div style="font-size:11px; color:#64748b; margin-top:3px;">مولفه: ' + escapeHtml(rule.software) + (rule.version_val ? ' (' + escapeHtml(rule.version_op) + ' ' + escapeHtml(rule.version_val) + ')' : '') + '</div>' : '') +
+                '</td>' +
+                '<td><span class="afc-badge" style="background:#e0f2fe; color:#0369a1; font-size:11px;">' + escapeHtml(rule.category) + '</span></td>' +
+                '<td><span class="afc-badge ' + sevClass + '">' + sevLabel + '</span></td>' +
+                '<td style="text-align:center;">' +
+                    '<label class="afc-switch" style="transform:scale(0.85);">' +
+                        '<input type="checkbox" class="afc-toggle-waf-rule" data-rule-id="' + escapeHtml(rule.id) + '" ' + checkedAttr + '>' +
+                        '<span class="afc-slider"></span>' +
+                    '</label>' +
+                '</td>';
+
+            fragment.appendChild(tr);
+        });
+
+        $tbody[0].appendChild(fragment);
+    }
+
+    // سوییچ وضعیت قانون
+    $(document).on('change', '.afc-toggle-waf-rule', function () {
+        var $checkbox = $(this);
+        var ruleId = $checkbox.data('rule-id');
+        var isEnabled = $checkbox.is(':checked') ? 1 : 0;
+
+        $.ajax({
+            url: afcData.ajax_url,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'afc_toggle_rule',
+                nonce: afcData.nonce,
+                rule_id: ruleId,
+                enabled: isEnabled
+            },
+            success: function (res) {
+                if (res.success) {
+                    wafRulesCatalog.forEach(function (r) {
+                        if (r.id === ruleId) {
+                            r.enabled = !!isEnabled;
+                        }
+                    });
+                    logMessage('قانون ' + ruleId + ' ' + (isEnabled ? 'فعال شد.' : 'غیرفعال شد.'), 'system');
+                } else {
+                    alert((res.data && res.data.message) ? res.data.message : 'خطا در تغییر وضعیت قانون.');
+                    $checkbox.prop('checked', !isEnabled);
+                }
+            },
+            error: function () {
+                alert('خطا در برقراری ارتباط با سرور.');
+                $checkbox.prop('checked', !isEnabled);
+            }
+        });
+    });
+
+    // فعال‌سازی هنگام کلیک روی تب قوانین
+    $('.afc-tab-btn[data-tab="tab-rules"]').on('click', function () {
+        if (!wafWhitelistLoaded) {
+            loadWhitelistedUrls();
+        }
+        if (!wafRulesLoaded) {
+            loadWafRulesCatalog();
+        }
+    });
+
+    if (window.location.hash === '#tab-rules') {
+        $('.afc-tab-btn[data-tab="tab-rules"]').trigger('click');
+    }
+
 });

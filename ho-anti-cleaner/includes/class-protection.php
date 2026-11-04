@@ -79,52 +79,162 @@ if ( ! class_exists( 'HO_Anti_Protection' ) ) {
         }
 
         /**
-         * ۱. فایروال پیشگیرانه (Micro-Firewall)
+         * ۱. فایروال هوشمند پیشگیرانه (Enterprise WAF Engine بر پایه قوانین v3.5.0)
          */
         private function init_firewall() {
             if ( ! get_option( 'ho_anti_firewall_enabled', 1 ) ) {
                 return;
             }
 
-            // الف) بررسی کوکی‌های درپشتی شناخته‌شده (مانند yrxc_uck)
+            // بررسی لیست سفید آدرس‌ها (Whitelisted URLs)
+            if ( class_exists( 'HO_Anti_Rule_Manager' ) && HO_Anti_Rule_Manager::is_current_url_whitelisted() ) {
+                return;
+            }
+
+            $client_ip = self::get_client_ip();
+            $req_uri   = isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( $_SERVER['REQUEST_URI'] ) : '';
+            $ua        = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( $_SERVER['HTTP_USER_AGENT'] ) : '';
+
+            // ۱. پایش و مسدودسازی پویشگرهای آسیب‌پذیری و اسکنرهای مخرب (security-scanner / brute-force)
+            if ( ! empty( $ua ) && preg_match( '/\b(?:sqlmap|nikto|wpscan|acunetix|dirbuster|havij|zaproxy|nmap|masscan|openvas|hydra)\b/i', $ua ) ) {
+                self::record_security_event( 'waf_blocked_scanner', "مسدودسازی پویشگر مخرب امنیتی بر اساس امضای User-Agent: $ua", [
+                    'ip'         => $client_ip,
+                    'user_agent' => $ua,
+                    'uri'        => $req_uri,
+                    'rule'       => 'Common vulnerability scanner User-Agents',
+                ] );
+                wp_die(
+                    '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>دسترسی مسدود شد (HO Anti WAF)</h2><p>ابزار خودکار یا پویشگر امنیتی غیرمجاز شناسایی گردید.</p></div>',
+                    'Access Denied - 403',
+                    [ 'response' => 403 ]
+                );
+            }
+
+            // ۲. بررسی کوکی‌های درپشتی و تزریق آبجکت در کوکی‌ها (backdoor / obji)
             if ( ! empty( $_COOKIE ) ) {
                 foreach ( $_COOKIE as $k => $v ) {
-                    if ( false !== strpos( $k, 'yrxc_u' ) || false !== strpos( $k, 'yrxc_uck' ) ) {
+                    // کوکی‌های شناخته‌شده بدافزار
+                    if ( false !== strpos( $k, 'yrxc_u' ) || false !== strpos( $k, 'yrxc_uck' ) || 'FB6904' === $k ) {
                         self::record_security_event( 'firewall_blocked_cookie', "مسدودسازی مهاجم با کوکی درب‌پشتی ($k)", [
-                            'ip'         => self::get_client_ip(),
+                            'ip'         => $client_ip,
                             'cookie'     => $k,
-                            'uri'        => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( $_SERVER['REQUEST_URI'] ) : '',
-                            'user_agent' => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( $_SERVER['HTTP_USER_AGENT'] ) : '',
+                            'uri'        => $req_uri,
+                            'user_agent' => $ua,
                         ] );
                         wp_die(
-                            '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>دسترسی غیرمجاز (مسدودشده توسط فایروال HO Anti)</h2><p>شناسه کوکی ارسالی در لیست سیاه تهدیدات امنیتی قرار دارد.</p></div>',
+                            '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>دسترسی غیرمجاز (فایروال هوشمند HO Anti)</h2><p>شناسه کوکی ارسالی در فهرست بدافزارهای مسدودشده قرار دارد.</p></div>',
                             'Access Denied - 403',
+                            [ 'response' => 403 ]
+                        );
+                    }
+
+                    // تزریق آبجکت در کوکی (PHP Object Injection in Cookies)
+                    if ( is_string( $v ) && preg_match( '/(?:O:\d+:"[a-zA-Z0-9_]+":|a:\d+:\{)/i', $v ) ) {
+                        self::record_security_event( 'waf_blocked_obji', "مسدودسازی تزریق آبجکت PHP در کوکی ($k)", [
+                            'ip'  => $client_ip,
+                            'uri' => $req_uri,
+                            'rule'=> 'PHP Object Injection in Cookies',
+                        ] );
+                        wp_die(
+                            '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>تزریق آبجکت PHP شناسایی و مسدود شد</h2><p>ارسال پی‌لودهای غیرمجاز در کوکی توسط فایروال مهار گردید.</p></div>',
+                            'Forbidden - 403',
                             [ 'response' => 403 ]
                         );
                     }
                 }
             }
 
-            // ب) بررسی پارامترهای درخواست برای کشف رفتارهای وب‌شل و تزریق RCE
-            $suspicious_inputs = array_merge( $_GET, $_POST );
-            if ( ! empty( $suspicious_inputs ) ) {
-                foreach ( $suspicious_inputs as $key => $val ) {
+            // ۳. کشف کاوش فایل‌های حساس (discovery-and-probing)
+            if ( preg_match( '/(?:\/debug\.log|\/wp-config\.php(?:\.bak|\.old|~|\.swp|\.save)|\/\.env(?:\.local)?|\/sql\.dump|\/dump\.sql|\/backup\.sql|\/readme\.txt\b)/i', $req_uri ) ) {
+                self::record_security_event( 'waf_blocked_probing', "مسدودسازی تلاش برای سرقت یا کاوش فایل‌های حساس پیکربندی ($req_uri)", [
+                    'ip'   => $client_ip,
+                    'uri'  => $req_uri,
+                    'rule' => 'WP Config File back-up probing & debug.log scan',
+                ] );
+                wp_die(
+                    '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>فایل درخواستی در دسترس نیست</h2><p>دسترسی مستقیم به این فایل توسط فایروال مسدود شده است.</p></div>',
+                    'Forbidden - 403',
+                    [ 'response' => 403 ]
+                );
+            }
+
+            // ۴. ارزیابی پارامترهای GET، POST و هدرها برای وکتورهای حمله (SQLi, XSS, LFI/RFI, Traversal, XXE, RCE)
+            $inputs = array_merge( $_GET, $_POST );
+
+            // اگر کاربر مدیر کل باشد و در پیشخوان وردپرس فعالیت کند، استثنا در نظر گرفته می‌شود
+            if ( is_admin() && current_user_can( 'manage_options' ) ) {
+                return;
+            }
+
+            if ( ! empty( $inputs ) ) {
+                foreach ( $inputs as $key => $val ) {
                     if ( ! is_string( $val ) ) continue;
 
-                    // بررسی اجرای دستورات شل یا دکد مستقیم base64/eval
-                    if ( preg_match( '/(?:passthru|shell_exec|base64_decode\s*\(|gzinflate\s*\(|file_put_contents\s*\()/i', $val ) ) {
-                        // استثنا برای پیشخوان مدیر
-                        if ( current_user_can( 'manage_options' ) && is_admin() ) {
-                            continue;
-                        }
-
-                        self::record_security_event( 'firewall_blocked_payload', "مسدودسازی پی‌لود مخرب RCE/Eval در پارامتر ($key)", [
-                            'ip'  => self::get_client_ip(),
-                            'uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( $_SERVER['REQUEST_URI'] ) : '',
+                    // الف) تزریق SQL (SQL Injection - sqli)
+                    if ( preg_match( '/(?:\b(?:union\s+(?:all\s+)?select|select\s+.*?\s+from|information_schema|benchmark\s*\(|sleep\s*\(|extractvalue\s*\(|updatexml\s*\(|into\s+(?:dump|out)file)\b|\'[\s;]*or[\s;]+\'?1\'?[\s;]*=[\s;]*\'?1|--\s*$|\/\*!.*?\*\/)/i', $val ) ) {
+                        self::record_security_event( 'waf_blocked_sqli', "مهار حمله تزریق پایگاه داده (SQL Injection) در پارامتر $key", [
+                            'ip'   => $client_ip,
+                            'uri'  => $req_uri,
+                            'rule' => 'SQL Injection Protection',
                         ] );
+                        wp_die(
+                            '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>تزریق کد پایگاه داده (SQL Injection) مهار شد</h2><p>درخواست شما حاوی کاراکترها و فرامین مشکوک SQL بود و توسط فایروال متوقف گردید.</p></div>',
+                            'Forbidden - 403',
+                            [ 'response' => 403 ]
+                        );
+                    }
 
+                    // ب) تزریق اسکریپت از مبدأ خارجی (XSS: Cross Site Scripting)
+                    if ( preg_match( '/(?:<script\b[^>]*>|javascript:\s*|on(?:error|load|click|mouseover|focus|submit)\s*=|<iframe\b|<svg\b[^>]*onload|<img\b[^>]*onerror)/i', $val ) ) {
+                        self::record_security_event( 'waf_blocked_xss', "مهار حمله تزریق اسکریپت (XSS) در پارامتر $key", [
+                            'ip'   => $client_ip,
+                            'uri'  => $req_uri,
+                            'rule' => 'XSS: Cross Site Scripting',
+                        ] );
+                        wp_die(
+                            '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>تلاش برای تزریق اسکریپت (XSS) مسدود شد</h2><p>فایروال امنیتی HO Anti اجرای تگ‌های اسکریپت را متوقف نمود.</p></div>',
+                            'Forbidden - 403',
+                            [ 'response' => 403 ]
+                        );
+                    }
+
+                    // ج) پیمایش دایرکتوری و شمول فایل محلی/خارجی (Directory Traversal / LFI / RFI)
+                    if ( preg_match( '/(?:\.{2,}[\\\/]{1,}|etc[\\\/]passwd|win\.ini|wp-config\.php|php:\/\/(?:filter|input)|phar:\/\/|data:\/\/text)/i', $val ) ) {
+                        self::record_security_event( 'waf_blocked_traversal', "مهار تلاش برای دسترسی به فایل‌های سیستمی (LFI/Traversal) در پارامتر $key", [
+                            'ip'   => $client_ip,
+                            'uri'  => $req_uri,
+                            'rule' => 'LFI: Local File Inclusion & Directory Traversal',
+                        ] );
+                        wp_die(
+                            '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>تلاش برای پیمایش دایرکتوری (Traversal / LFI) مسدود شد</h2><p>دسترسی غیرمجاز به فایل‌های مسیر سرور خنثی گردید.</p></div>',
+                            'Forbidden - 403',
+                            [ 'response' => 403 ]
+                        );
+                    }
+
+                    // د) اجرای فرامین راه دور و شل (RCE / Command Injection)
+                    if ( preg_match( '/(?:passthru|shell_exec|base64_decode\s*\(|gzinflate\s*\(|file_put_contents\s*\(|system\s*\(|exec\s*\(|popen\s*\(|proc_open\s*\()/i', $val ) ) {
+                        self::record_security_event( 'firewall_blocked_payload', "مسدودسازی پی‌لود مخرب RCE در پارامتر $key", [
+                            'ip'  => $client_ip,
+                            'uri' => $req_uri,
+                            'rule'=> 'Remote Code Execution (RCE)',
+                        ] );
                         wp_die(
                             '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>درخواست مشکوک شناسایی و مسدود گردید</h2><p>تلاش برای ارسال کدهای اجرایی توسط فایروال افزونه مهار شد.</p></div>',
+                            'Forbidden - 403',
+                            [ 'response' => 403 ]
+                        );
+                    }
+
+                    // هـ) گسترش موجودیت خارجی XML (XXE: External Entity Expansion)
+                    if ( preg_match( '/(?:<!ENTITY\s+[a-zA-Z0-9_-]+\s+SYSTEM|<!DOCTYPE\s+[^>]*SYSTEM)/i', $val ) ) {
+                        self::record_security_event( 'waf_blocked_xxe', "مهار حمله XXE در پارامتر $key", [
+                            'ip'   => $client_ip,
+                            'uri'  => $req_uri,
+                            'rule' => 'XXE: External Entity Expansion',
+                        ] );
+                        wp_die(
+                            '<div dir="rtl" style="font-family:tahoma; padding:20px; color:#b91c1c;"><h2>حمله XXE شناسایی و مهار شد</h2></div>',
                             'Forbidden - 403',
                             [ 'response' => 403 ]
                         );

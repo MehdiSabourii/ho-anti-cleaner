@@ -22,6 +22,11 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             add_action( 'wp_ajax_afc_generate_salts',            [ $this, 'ajax_generate_salts' ] );
             add_action( 'wp_ajax_afc_emergency_kick_sessions',    [ $this, 'ajax_emergency_kick_sessions' ] );
             add_action( 'wp_ajax_afc_fix_security_check',        [ $this, 'ajax_fix_security_check' ] );
+            add_action( 'wp_ajax_afc_get_rules_catalog',         [ $this, 'ajax_get_rules_catalog' ] );
+            add_action( 'wp_ajax_afc_toggle_rule',                [ $this, 'ajax_toggle_rule' ] );
+            add_action( 'wp_ajax_afc_get_whitelisted_urls',      [ $this, 'ajax_get_whitelisted_urls' ] );
+            add_action( 'wp_ajax_afc_add_whitelisted_url',       [ $this, 'ajax_add_whitelisted_url' ] );
+            add_action( 'wp_ajax_afc_remove_whitelisted_url',    [ $this, 'ajax_remove_whitelisted_url' ] );
             add_action( 'wp_ajax_afc_delete_single_file',        [ $this, 'ajax_delete_single_file' ] );
 
             // اکشن‌های جدید سپر امنیتی و ضد تزریق (Anti-Injection Protection)
@@ -217,6 +222,77 @@ if ( ! class_exists( 'HO_Anti_Ajax_Handler' ) ) {
             } else {
                 wp_send_json_error( [ 'message' => 'موتور بهینه‌سازی و ارزیابی امنیتی در دسترس نیست.' ] );
             }
+        }
+
+        public function ajax_get_rules_catalog() {
+            $this->verify_permissions();
+            if ( ! class_exists( 'HO_Anti_Rule_Manager' ) ) {
+                wp_send_json_error( [ 'message' => 'مدیریت قوانین در دسترس نیست.' ] );
+            }
+
+            $category = isset( $_POST['category'] ) ? sanitize_text_field( $_POST['category'] ) : 'all';
+            $rules    = HO_Anti_Rule_Manager::get_rules_by_category( $category );
+            $summary  = HO_Anti_Rule_Manager::get_categories_summary();
+            $disabled = get_option( 'ho_anti_disabled_rules', [] );
+            if ( ! is_array( $disabled ) ) $disabled = [];
+
+            foreach ( $rules as &$r ) {
+                $r['is_enabled'] = ! in_array( $r['id'], $disabled, true );
+            }
+
+            wp_send_json_success( [
+                'rules'       => $rules,
+                'total_count' => count( $rules ),
+                'summary'     => $summary,
+                'version'     => HO_Anti_Rule_Manager::get_active_rule_version(),
+            ] );
+        }
+
+        public function ajax_toggle_rule() {
+            $this->verify_permissions();
+            $rule_id = isset( $_POST['rule_id'] ) ? sanitize_text_field( $_POST['rule_id'] ) : '';
+            $enable  = isset( $_POST['enable'] ) ? (bool) $_POST['enable'] : true;
+
+            if ( empty( $rule_id ) ) {
+                wp_send_json_error( [ 'message' => 'شناسه قانون نامعتبر است.' ] );
+            }
+
+            HO_Anti_Rule_Manager::toggle_rule( $rule_id, $enable );
+            wp_send_json_success( [ 'rule_id' => $rule_id, 'enabled' => $enable ] );
+        }
+
+        public function ajax_get_whitelisted_urls() {
+            $this->verify_permissions();
+            $urls = class_exists( 'HO_Anti_Rule_Manager' ) ? HO_Anti_Rule_Manager::get_whitelisted_urls() : [];
+            wp_send_json_success( [ 'urls' => array_values( $urls ) ] );
+        }
+
+        public function ajax_add_whitelisted_url() {
+            $this->verify_permissions();
+            $url = isset( $_POST['url'] ) ? sanitize_text_field( wp_unslash( $_POST['url'] ) ) : '';
+            if ( empty( $url ) ) {
+                wp_send_json_error( [ 'message' => 'آدرس مشخص نشده است.' ] );
+            }
+
+            HO_Anti_Rule_Manager::add_whitelisted_url( $url );
+            wp_send_json_success( [
+                'urls'    => array_values( HO_Anti_Rule_Manager::get_whitelisted_urls() ),
+                'message' => 'آدرس با موفقیت به لیست سفید (Whitelist) افزوده شد.',
+            ] );
+        }
+
+        public function ajax_remove_whitelisted_url() {
+            $this->verify_permissions();
+            $url = isset( $_POST['url'] ) ? sanitize_text_field( wp_unslash( $_POST['url'] ) ) : '';
+            if ( empty( $url ) ) {
+                wp_send_json_error( [ 'message' => 'آدرس مشخص نشده است.' ] );
+            }
+
+            HO_Anti_Rule_Manager::remove_whitelisted_url( $url );
+            wp_send_json_success( [
+                'urls'    => array_values( HO_Anti_Rule_Manager::get_whitelisted_urls() ),
+                'message' => 'آدرس با موفقیت از لیست سفید حذف گردید.',
+            ] );
         }
 
         public function ajax_delete_single_file() {

@@ -133,6 +133,9 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
         <a href="#tab-logs" class="afc-tab-btn" data-tab="tab-logs">
             <span class="dashicons dashicons-editor-code"></span> لاگ زنده و حوادث امنیتی
         </a>
+        <a href="#tab-rules" class="afc-tab-btn" data-tab="tab-rules">
+            <span class="dashicons dashicons-shield"></span> قوانین فایروال و لیست سفید (۷۱۷ قانون)
+        </a>
     </div>
 
     <!-- محتوای زبانه‌ها -->
@@ -709,6 +712,106 @@ $host_status      = class_exists( 'HO_Anti_Host_Agent_Bridge' ) ? HO_Anti_Host_A
                     <p style="font-size:12px; color:#64748b;">
                         <em>توجه: در صورتی که از هاست اشتراکی استفاده می‌کنید، نیازی به این مرحله نیست و تمامی لایه‌های دفاعی وردپرس به طور خودکار فعال هستند.</em>
                     </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- زبانه ۸: قوانین فایروال و لیست سفید (۷۱۷ قانون) -->
+        <div id="tab-rules" class="afc-tab-pane">
+            <div class="afc-box" style="margin-bottom:25px; border-right:4px solid #2563eb;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px;">
+                    <div>
+                        <h2 style="margin:0 0 8px 0; font-size:18px; color:#1e3a8a;">
+                            <span class="dashicons dashicons-shield" style="color:#2563eb;"></span>
+                            پایگاه جامع قوانین هوشمند WAF و مدیریت لیست سفید (Whitelisted URLs)
+                        </h2>
+                        <p style="margin:0; color:#475569; font-size:13.5px; line-height:1.7;">
+                            فایروال پیشرفته لایه ۷ مجهز به <strong>۷۱۷ قانون فعال WAF</strong> و پایگاه امضای آسیب‌پذیری‌های امنیتی (SQLi, XSS, RCE, LFI, Priv-Esc, Backdoor و غیره) در کنار امکان تعریف لیست سفید آدرس‌های اختصاصی سایت.
+                        </p>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <span class="afc-badge afc-badge-safe" style="font-size:13px; padding:8px 14px;">۷۱۷ قانون سازمانی</span>
+                        <span class="afc-badge" style="background:#e0e7ff; color:#3730a3; font-size:13px; padding:8px 14px;">نسخه پایگاه: ۳.۵.۰</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- بخش مدیریت لیست سفید آدرس‌ها (Whitelisted URLs) -->
+            <div class="afc-box" style="margin-bottom:25px;">
+                <div class="afc-section-header">
+                    <h3><span class="dashicons dashicons-admin-links"></span> مدیریت لیست سفید آدرس‌ها (Whitelisted URLs)</h3>
+                </div>
+                <div class="afc-section-body">
+                    <p style="font-size:13px; color:#64748b; margin-top:0;">
+                        درخواست‌هایی که با الگوها یا مسیرهای زیر مطابقت داشته باشند، از بررسی‌های سخت‌گیرانه فایروال WAF عبور داده می‌شوند تا وب‌سرویس‌ها یا فرآیندهای معتبر شما دچار مسدودی کاذب نگردند.
+                    </p>
+                    <div style="display:flex; gap:10px; margin-bottom:15px; flex-wrap:wrap;">
+                        <input type="text" id="afc-input-whitelist-url" placeholder="مثال: /wp-admin/admin-ajax.php یا my-api-route یا ?custom_param=val" style="flex:1; min-width:300px; padding:8px 12px; font-size:13px; border:1px solid #cbd5e1; border-radius:6px; direction:ltr; text-align:left;">
+                        <button type="button" id="afc-btn-add-whitelist" class="button button-primary">
+                            <span class="dashicons dashicons-plus-alt2"></span> افزودن به لیست سفید
+                        </button>
+                    </div>
+                    <div id="afc-whitelist-container">
+                        <table class="afc-table" id="afc-whitelist-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:60%;">الگو / آدرس مجاز (URL Pattern)</th>
+                                    <th style="width:25%;">تاریخ ثبت</th>
+                                    <th style="width:15%;">عملیات</th>
+                                </tr>
+                            </thead>
+                            <tbody id="afc-whitelist-list">
+                                <tr>
+                                    <td colspan="3" style="text-align:center; color:#94a3b8; padding:20px;">در حال بارگذاری لیست سفید...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- کاتالوگ و کاوشگر قوانین WAF -->
+            <div class="afc-box">
+                <div class="afc-section-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                    <h3><span class="dashicons dashicons-list-view"></span> کاوشگر و مدیریت قوانین فایروال (۷۱۷ امضای امنیتی)</h3>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <input type="text" id="afc-rules-search" placeholder="جستجو در قوانین (نام، افزونه، آسیب‌پذیری)..." style="padding:6px 12px; font-size:13px; border:1px solid #cbd5e1; border-radius:6px; min-width:260px;">
+                    </div>
+                </div>
+                <div class="afc-section-body">
+                    <!-- فیلتر دسته‌بندی‌ها -->
+                    <div id="afc-category-filters" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px;">
+                        <button type="button" class="afc-cat-pill active" data-category="all" style="padding:6px 14px; border-radius:20px; font-size:12px; border:1px solid #2563eb; background:#2563eb; color:#fff; cursor:pointer; font-weight:600;">
+                            همه (۷۱۷)
+                        </button>
+                    </div>
+
+                    <!-- جدول قوانین -->
+                    <div style="max-height:600px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px;">
+                        <table class="afc-table" id="afc-rules-table">
+                            <thead style="position:sticky; top:0; z-index:10; background:#f8fafc; border-bottom:2px solid #cbd5e1;">
+                                <tr>
+                                    <th style="width:16%;">شناسه</th>
+                                    <th style="width:42%;">عنوان آسیب‌پذیری و قانون</th>
+                                    <th style="width:18%;">دسته‌بندی</th>
+                                    <th style="width:12%;">سطح خطر</th>
+                                    <th style="width:12%; text-align:center;">وضعیت</th>
+                                </tr>
+                            </thead>
+                            <tbody id="afc-rules-body">
+                                <tr>
+                                    <td colspan="5" style="text-align:center; padding:30px; color:#64748b;">
+                                        <span class="spinner is-active" style="float:none; margin:0 5px;"></span>
+                                        در حال بارگذاری پایگاه قوانین...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="margin-top:14px; display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#64748b;">
+                        <span id="afc-rules-count-display">در حال بارگذاری...</span>
+                        <span style="color:#16a34a; font-weight:600;">✓ محافظت بلادرنگ WAF فعال است</span>
+                    </div>
                 </div>
             </div>
         </div>

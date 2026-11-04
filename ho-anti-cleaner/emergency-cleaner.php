@@ -1,6 +1,6 @@
 <?php
 /**
- * Emergency Standalone HO Anti Cleaner & Security Shield v3.4.0
+ * Emergency Standalone HO Anti Cleaner & Security Shield v3.5.0
  * فایل اضطراری تک‌مرحله‌ای برای پاک‌سازی کامل سایت، جراحی گیت‌کیپرهای لاگین و قفل محافظتی فایل‌ها
  * نحوه استفاده: این فایل را در ریشه وردپرس (کنار wp-config.php) آپلود کرده و در مرورگر باز کنید.
  */
@@ -362,7 +362,7 @@ if ( isset( $_POST['self_delete'] ) ) {
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>ابزار اضطراری HO Anti v3.4.0</title>
+    <title>ابزار اضطراری HO Anti v3.5.0</title>
     <style>
         body { font-family: -apple-system, Tahoma, Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 40px 20px; color: #1e293b; }
         .container { max-width: 860px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 32px; }
@@ -381,7 +381,7 @@ if ( isset( $_POST['self_delete'] ) ) {
 </head>
 <body>
 <div class="container">
-    <h1>🛡️ پاک‌ساز اضطراری و سپر ضد تزریق HO Anti v3.4.0</h1>
+    <h1>🛡️ پاک‌ساز اضطراری و سپر ضد تزریق HO Anti v3.5.0</h1>
     <p>این ابزار به صورت مستقیم فایل‌های ریشه (به ویژه <code>wp-login.php</code>) را از گیت‌کیپرهای مسدودکننده پاک کرده، فایل‌های آلوده به بدافزار را جراحی و کلیه درپشتی‌های دیتابیس و mu-plugins را حذف نموده و فایل‌های حساس را با مجوز 0444 قفل می‌کند.</p>
 
     <?php if ( ! $is_executed ): ?>

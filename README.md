@@ -5,7 +5,7 @@
 [![WordPress](https://img.shields.io/badge/WordPress-5.0%2B-blue.svg)](https://wordpress.org)
 [![PHP](https://img.shields.io/badge/PHP-7.4%20--%208.3-purple.svg)](https://php.net)
 [![License](https://img.shields.io/badge/License-GPL--2.0%2B-green.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
-[![Version](https://img.shields.io/badge/Version-3.4.0-brightgreen.svg)](#)
+[![Version](https://img.shields.io/badge/Version-3.5.0-brightgreen.svg)](#)
 [![Tests](https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen.svg)](#acceptance-tests)
 [![Language](https://img.shields.io/badge/Documentation-English%20%7C%20Persian-blue.svg)](README_FA.md)
 
@@ -103,7 +103,7 @@ Synthesizing principles from leading open-source security projects (CleanTalk, S
 
 ```text
 ├── ho-anti-cleaner/                     # WordPress Plugin Root
-│   ├── ho-anti-cleaner.php              # Main Plugin Bootstrap (v3.4.0)
+│   ├── ho-anti-cleaner.php              # Main Plugin Bootstrap (v3.5.0)
 │   ├── emergency-cleaner.php            # Standalone Single-File Emergency Rescuer
 │   ├── includes/
 │   │   ├── models/
